@@ -29,6 +29,14 @@ const (
 	writeWait       = 5 * time.Second
 )
 
+func logf(user, format string, args ...any) {
+	if user != "" {
+		log.Printf("["+user+"] "+format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
+}
+
 type server struct {
 	token   string
 	mu      sync.RWMutex
@@ -89,12 +97,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	oldConn := s.conn
 	if oldConn != nil {
-		oldUser := s.user
-		if oldUser != "" {
-			log.Printf("[%s] new tunnel connection, closing previous", oldUser)
-		} else {
-			log.Println("new tunnel connection, closing previous")
-		}
+		logf(s.user, "new tunnel connection, closing previous")
 	}
 	s.conn = conn
 	s.user = user
@@ -105,11 +108,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		_ = oldConn.Close()
 	}
 
-	if user != "" {
-		log.Printf("[%s] tunnel connected", user)
-	} else {
-		log.Println("tunnel connected")
-	}
+	logf(user, "tunnel connected")
 
 	// Keepalive: reset read deadlines on pong
 	conn.SetReadDeadline(time.Now().Add(tun.PongWait))
@@ -147,12 +146,9 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 			s.mu.RLock()
 			replaced := s.conn != conn
 			s.mu.RUnlock()
-			if !replaced {
-				if user != "" {
-					log.Printf("[%s] tunnel read error: %v", user, err)
-				} else {
-					log.Printf("tunnel read error: %v", err)
-				}
+			normalClose := websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
+			if !replaced && !normalClose {
+				logf(user, "tunnel read error: %v", err)
 			}
 			break
 		}
@@ -183,11 +179,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 
 	// Only log disconnect if not replaced (replacement logs its own message)
 	if !replaced {
-		if user != "" {
-			log.Printf("[%s] tunnel disconnected", user)
-		} else {
-			log.Println("tunnel disconnected")
-		}
+		logf(user, "tunnel disconnected")
 	}
 }
 

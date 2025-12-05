@@ -27,6 +27,16 @@ type rule struct {
 	method, path string
 }
 
+var user string
+
+func logf(format string, args ...any) {
+	if user != "" {
+		log.Printf("["+user+"] "+format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
+}
+
 func main() {
 	log.SetFlags(0)
 	tun.LoadEnv(".env")
@@ -99,12 +109,8 @@ func run(server, local, token string, rules []rule) {
 }
 
 func connect(server, local, token string, rules []rule, interrupt chan os.Signal) error {
-	user := getUser()
-	if user != "" {
-		log.Printf("[%s] connecting to %s", user, server)
-	} else {
-		log.Printf("connecting to %s", server)
-	}
+	user = getUser()
+	logf("connecting to %s", server)
 
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
@@ -125,11 +131,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	})
 	mu := &sync.Mutex{}
 
-	if user != "" {
-		log.Printf("[%s] connected, forwarding to %s", user, local)
-	} else {
-		log.Printf("connected, forwarding to %s", local)
-	}
+	logf("connected, forwarding to %s", local)
 
 	done := make(chan struct{})
 	go func() {

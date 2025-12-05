@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// LoadEnv loads KEY=VALUE lines from a .env file.
-// Existing env vars are not overwritten.
+// LoadEnv loads TUN_* environment variables from a .env file.
+// Only keys prefixed with "TUN_" are loaded; existing env vars are not overwritten.
 func LoadEnv(name string) {
 	data, err := os.ReadFile(name)
 	if err != nil {
