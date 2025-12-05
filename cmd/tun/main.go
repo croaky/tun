@@ -27,11 +27,17 @@ type rule struct {
 	method, path string
 }
 
-var user string
+type client struct {
+	conn  *websocket.Conn
+	mu    *sync.Mutex
+	local string
+	rules []rule
+	user  string
+}
 
-func logf(format string, args ...any) {
-	if user != "" {
-		log.Printf("["+user+"] "+format, args...)
+func (c *client) logf(format string, args ...any) {
+	if c.user != "" {
+		log.Printf("["+c.user+"] "+format, args...)
 	} else {
 		log.Printf(format, args...)
 	}
@@ -61,56 +67,51 @@ func main() {
 	run(server, local, token, rules)
 }
 
+var delays = []time.Duration{
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+	4 * time.Second,
+	8 * time.Second,
+	15 * time.Second,
+	30 * time.Second,
+}
+
 const (
-	minDelay       = 500 * time.Millisecond
-	maxDelay       = 30 * time.Second
-	backoffReset   = 10 * time.Second
 	requestTimeout = 30 * time.Second
 	writeWait      = 5 * time.Second
 )
 
 // run connects to the tunnel server and forwards requests to the local service.
-// It reconnects with exponential backoff on connection errors.
+// It reconnects with backoff on connection errors.
 func run(server, local, token string, rules []rule) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
-	backoff := minDelay
+	attempt := 0
 	for {
-		start := time.Now()
 		err := connect(server, local, token, rules, interrupt)
 		if err == nil {
-			// nil means graceful shutdown via interrupt
-			return
+			return // graceful shutdown
 		}
 		log.Printf("connection error: %v", err)
 
-		// Backoff with jitter; reset if the prior session lasted long enough
-		if time.Since(start) > backoffReset {
-			backoff = minDelay
-		} else {
-			if backoff < maxDelay {
-				backoff = time.Duration(float64(backoff) * 1.6)
-				if backoff > maxDelay {
-					backoff = maxDelay
-				}
-			}
-		}
-		jitter := time.Duration(rand.Int63n(int64(backoff / 2)))
-		wait := backoff/2 + jitter
-		log.Printf("reconnecting in %s...", wait)
+		delay := delays[min(attempt, len(delays)-1)]
+		delay = time.Duration(float64(delay) * (0.75 + rand.Float64()*0.5)) // ±25%
+		log.Printf("reconnecting in %s...", delay)
+
 		select {
 		case <-interrupt:
 			log.Println("interrupted")
 			return
-		case <-time.After(wait):
+		case <-time.After(delay):
 		}
+		attempt++
 	}
 }
 
 func connect(server, local, token string, rules []rule, interrupt chan os.Signal) error {
-	user = getUser()
-	logf("connecting to %s", server)
+	user := getUser()
 
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
@@ -124,14 +125,21 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	}
 	defer conn.Close()
 
+	c := &client{
+		conn:  conn,
+		mu:    &sync.Mutex{},
+		local: local,
+		rules: rules,
+		user:  user,
+	}
+
+	c.logf("connected to %s, forwarding to %s", server, local)
+
 	conn.SetReadDeadline(time.Now().Add(tun.PongWait))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(tun.PongWait))
 		return nil
 	})
-	mu := &sync.Mutex{}
-
-	logf("connected, forwarding to %s", local)
 
 	done := make(chan struct{})
 	go func() {
@@ -140,9 +148,9 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 		for {
 			select {
 			case <-t.C:
-				mu.Lock()
+				c.mu.Lock()
 				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
-				mu.Unlock()
+				c.mu.Unlock()
 				if err != nil {
 					log.Printf("ping error: %v", err)
 					return
@@ -168,7 +176,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 				continue
 			}
 
-			go handleRequest(conn, mu, local, rules, req)
+			go c.handleRequest(req)
 		}
 	}()
 
@@ -176,32 +184,32 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	case <-done:
 		return fmt.Errorf("connection closed")
 	case <-interrupt:
-		mu.Lock()
+		c.mu.Lock()
 		_ = conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		mu.Unlock()
+		c.mu.Unlock()
 		return nil
 	}
 }
 
-func handleRequest(conn *websocket.Conn, mu *sync.Mutex, local string, rules []rule, req tun.Request) {
+func (c *client) handleRequest(req tun.Request) {
 	log.Printf("%s %s", req.Method, req.Path)
 
 	resp := tun.Response{ID: req.ID}
 
-	if !allowed(rules, req.Method, req.Path) {
+	if !allowed(c.rules, req.Method, req.Path) {
 		log.Printf("blocked: %s %s", req.Method, req.Path)
 		resp.Status = http.StatusForbidden
 		resp.Body = []byte("forbidden by tunnel filter")
-		send(conn, mu, resp)
+		c.send(resp)
 		return
 	}
 
-	r, err := http.NewRequest(req.Method, local+req.Path, bytes.NewReader(req.Body))
+	r, err := http.NewRequest(req.Method, c.local+req.Path, bytes.NewReader(req.Body))
 	if err != nil {
 		resp.Status = http.StatusInternalServerError
 		resp.Body = []byte(err.Error())
-		send(conn, mu, resp)
+		c.send(resp)
 		return
 	}
 	for k, vs := range req.Headers {
@@ -215,26 +223,31 @@ func handleRequest(conn *websocket.Conn, mu *sync.Mutex, local string, rules []r
 		log.Printf("local request error: %v", err)
 		resp.Status = http.StatusBadGateway
 		resp.Body = []byte(err.Error())
-		send(conn, mu, resp)
+		c.send(resp)
 		return
 	}
 	defer res.Body.Close()
 
 	resp.Status = res.StatusCode
 	resp.Headers = map[string][]string(res.Header)
-	resp.Body, _ = io.ReadAll(res.Body)
-	send(conn, mu, resp)
+	resp.Body, err = io.ReadAll(res.Body)
+	if err != nil {
+		log.Printf("read body error: %v", err)
+		resp.Status = http.StatusBadGateway
+		resp.Body = []byte(err.Error())
+	}
+	c.send(resp)
 }
 
-func send(conn *websocket.Conn, mu *sync.Mutex, resp tun.Response) {
+func (c *client) send(resp tun.Response) {
 	msg, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("marshal error: %v", err)
 		return
 	}
-	mu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, msg)
-	mu.Unlock()
+	c.mu.Lock()
+	err = c.conn.WriteMessage(websocket.TextMessage, msg)
+	c.mu.Unlock()
 	if err != nil {
 		log.Printf("write error: %v", err)
 	}

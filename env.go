@@ -29,8 +29,8 @@ func LoadEnv(name string) {
 		k := strings.TrimSpace(line[:i])
 		v := strings.TrimSpace(line[i+1:])
 		v = strings.Trim(v, "\"'")
-		// Only import our own keys to avoid clobbering app env (e.g. PORT from Rails)
-		if !strings.HasPrefix(k, "TUN_") {
+		// Only import our own keys (plus PORT) to avoid clobbering app env
+		if !strings.HasPrefix(k, "TUN_") && k != "PORT" {
 			continue
 		}
 		if os.Getenv(k) == "" {

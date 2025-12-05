@@ -1,6 +1,7 @@
 # tun
 
 Tunnel local services to the public internet.
+Self-hosted ngrok alternative.
 
 ## Tutorial
 
@@ -15,13 +16,16 @@ Set up `tund` on a server:
 4. Set start command: `./tund`
 5. Set environment variable `TUN_TOKEN` to something secret
 6. Set "Auto Deploy" to "Off"
-7. Deploy
+7. Set "Health Check Path" to `/health`
+8. Deploy
 
-Endpoints:
+Server endpoints:
 
-- `GET /health` - Health check for Render
+- `GET /health` - Health check
 - `GET /tunnel` - WebSocket endpoint for tunnel client
 - `* /*` - All other requests forwarded through tunnel
+
+`tund` accepts one active tunnel; a new connection closes the previous one.
 
 Render provides HTTPS automatically.
 
@@ -39,24 +43,21 @@ Create a `.env` file in the directory you run `tun`:
 ```
 TUN_SERVER=wss://your-service.onrender.com/tunnel
 TUN_LOCAL=http://localhost:3000
-TUN_ALLOW=POST /slack/events GET /health
+TUN_ALLOW="POST /slack/events GET /health"
 TUN_TOKEN=your-shared-secret
 ```
 
-`TUN_ALLOW` accepts space-separated `METHOD /path` pairs.
+`TUN_ALLOW` accepts space-separated `METHOD /path` pairs (exact match, no wildcards).
 All requests not matching a rule return 403 Forbidden.
 
 **Security:** `TUN_TOKEN` is required on both client and server.
-Without it, anyone could connect to your tunnel server.
 The client authenticates using `Authorization: Bearer <token>`.
 
-Then run:
+Run:
 
 ```sh
 tun
 ```
-
-`tund` accepts one active tunnel; a new connection closes the previous one.
 
 ## Developing tun
 
