@@ -27,6 +27,13 @@ Server endpoints:
 
 `tund` accepts one active tunnel connection at a time.
 A new connection closes the previous one.
+Server logs look like:
+
+```
+[croaky] tunnel connected
+200 POST /slack/events 147.33ms
+[croaky] tunnel disconnected
+```
 
 Configure the Slack app's "Event Subscriptions URL" to:
 `https://your-service.onrender.com/slack/events`.
@@ -58,6 +65,16 @@ Run:
 ```sh
 tun
 ```
+
+Client logs look like:
+
+```
+[croaky] connected to wss://your-service.onrender.com/tunnel, forwarding to http://localhost:3000
+POST /slack/events
+```
+
+The client auto-reconnects with exponential backoff (500ms to 30s).
+Requests timeout after 30 seconds.
 
 ## Developing tun
 
