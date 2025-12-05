@@ -33,6 +33,7 @@ type server struct {
 	token   string
 	mu      sync.RWMutex
 	conn    *websocket.Conn
+	user    string
 	pending map[string]chan tun.Response
 }
 
@@ -82,16 +83,33 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := r.Header.Get("X-Tunnel-User")
+
 	// Close existing connection if any (single tunnel at a time)
 	s.mu.Lock()
-	if s.conn != nil {
-		log.Println("new tunnel connection, closing previous")
-		_ = s.conn.Close()
+	oldConn := s.conn
+	if oldConn != nil {
+		oldUser := s.user
+		if oldUser != "" {
+			log.Printf("[%s] new tunnel connection, closing previous", oldUser)
+		} else {
+			log.Println("new tunnel connection, closing previous")
+		}
 	}
 	s.conn = conn
+	s.user = user
 	s.mu.Unlock()
 
-	log.Println("tunnel connected")
+	// Close old connection outside of lock
+	if oldConn != nil {
+		_ = oldConn.Close()
+	}
+
+	if user != "" {
+		log.Printf("[%s] tunnel connected", user)
+	} else {
+		log.Println("tunnel connected")
+	}
 
 	// Keepalive: reset read deadlines on pong
 	conn.SetReadDeadline(time.Now().Add(tun.PongWait))
@@ -125,7 +143,17 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("tunnel read error: %v", err)
+			// Don't log error if this connection was replaced by a new one
+			s.mu.RLock()
+			replaced := s.conn != conn
+			s.mu.RUnlock()
+			if !replaced {
+				if user != "" {
+					log.Printf("[%s] tunnel read error: %v", user, err)
+				} else {
+					log.Printf("tunnel read error: %v", err)
+				}
+			}
 			break
 		}
 
@@ -146,11 +174,21 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	close(done)
 
 	s.mu.Lock()
+	replaced := s.conn != conn
 	if s.conn == conn {
 		s.conn = nil
+		s.user = ""
 	}
 	s.mu.Unlock()
-	log.Println("tunnel disconnected")
+
+	// Only log disconnect if not replaced (replacement logs its own message)
+	if !replaced {
+		if user != "" {
+			log.Printf("[%s] tunnel disconnected", user)
+		} else {
+			log.Println("tunnel disconnected")
+		}
+	}
 }
 
 func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {

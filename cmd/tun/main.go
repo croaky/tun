@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
@@ -95,10 +96,18 @@ func run(server, local, token string, rules []rule) {
 }
 
 func connect(server, local, token string, rules []rule, interrupt chan os.Signal) error {
-	log.Printf("connecting to %s", server)
+	user := getUser()
+	if user != "" {
+		log.Printf("[%s] connecting to %s", user, server)
+	} else {
+		log.Printf("connecting to %s", server)
+	}
 
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
+	if user != "" {
+		h.Set("X-Tunnel-User", user)
+	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(server, h)
 	if err != nil {
@@ -113,7 +122,11 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	})
 	mu := &sync.Mutex{}
 
-	log.Printf("connected, forwarding to %s", local)
+	if user != "" {
+		log.Printf("[%s] connected, forwarding to %s", user, local)
+	} else {
+		log.Printf("connected, forwarding to %s", local)
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -243,4 +256,16 @@ func allowed(rules []rule, method, path string) bool {
 		}
 	}
 	return false
+}
+
+// getUser returns the tunnel user identifier.
+// It first tries git config github.user, then falls back to $USER.
+func getUser() string {
+	out, err := exec.Command("git", "config", "--get", "github.user").Output()
+	if err == nil {
+		if user := strings.TrimSpace(string(out)); user != "" {
+			return user
+		}
+	}
+	return os.Getenv("USER")
 }
