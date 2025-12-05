@@ -184,11 +184,13 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	s.mu.RLock()
 	conn := s.conn
 	s.mu.RUnlock()
 
 	if conn == nil {
+		log.Printf("%d %s %s %.2fms", http.StatusServiceUnavailable, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 		http.Error(w, "no tunnel connected", http.StatusServiceUnavailable)
 		return
 	}
@@ -196,6 +198,7 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("%d %s %s %.2fms", http.StatusBadRequest, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
@@ -224,6 +227,7 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		delete(s.pending, reqID)
 		s.mu.Unlock()
+		log.Printf("%d %s %s %.2fms", http.StatusInternalServerError, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 		http.Error(w, "marshal error", http.StatusInternalServerError)
 		return
 	}
@@ -235,6 +239,7 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		delete(s.pending, reqID)
 		s.mu.Unlock()
+		log.Printf("%d %s %s %.2fms", http.StatusBadGateway, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 		http.Error(w, "tunnel write error", http.StatusBadGateway)
 		return
 	}
@@ -249,10 +254,12 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(resp.Status)
 		_, _ = w.Write(resp.Body)
+		log.Printf("%d %s %s %.2fms", resp.Status, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 	case <-time.After(responseTimeout):
 		s.mu.Lock()
 		delete(s.pending, reqID)
 		s.mu.Unlock()
+		log.Printf("%d %s %s %.2fms", http.StatusGatewayTimeout, r.Method, r.URL.RequestURI(), float64(time.Since(start).Microseconds())/1000)
 		http.Error(w, "tunnel timeout", http.StatusGatewayTimeout)
 	}
 }
