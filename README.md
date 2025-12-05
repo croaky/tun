@@ -5,8 +5,8 @@ Self-hosted ngrok alternative.
 
 ## Tutorial
 
-The following example shows how to use `tun`
-with the [Slack Events API](https://docs.slack.dev/apis/events-api).
+The following example shows how to use `tun` and `tund` to expose a local web
+service to the [Slack Events API](https://docs.slack.dev/apis/events-api).
 
 Set up `tund` on a server:
 
@@ -25,12 +25,12 @@ Server endpoints:
 - `GET /tunnel` - WebSocket endpoint for tunnel client
 - `* /*` - All other requests forwarded through tunnel
 
-`tund` accepts one active tunnel; a new connection closes the previous one.
-
-Render provides HTTPS automatically.
+`tund` accepts one active tunnel connection at a time.
+A new connection closes the previous one.
 
 Configure the Slack app's "Event Subscriptions URL" to:
-`https://your-service.onrender.com/slack/events`
+`https://your-service.onrender.com/slack/events`.
+Render provides HTTPS automatically.
 
 Install `tun` on a laptop:
 
@@ -50,7 +50,7 @@ TUN_TOKEN=your-shared-secret
 `TUN_ALLOW` accepts space-separated `METHOD /path` pairs (exact match, no wildcards).
 All requests not matching a rule return 403 Forbidden.
 
-**Security:** `TUN_TOKEN` is required on both client and server.
+`TUN_TOKEN` is required on both client and server.
 The client authenticates using `Authorization: Bearer <token>`.
 
 Run:
@@ -67,20 +67,17 @@ brew install go
 git checkout -b user/feature
 
 # terminal 1: start server
-# Required: set PORT and TUN_TOKEN in ./.env for local dev
-# ./.env (ignored by git):
+# Place .env in the directory you run `tund`:
 #   PORT=8080
 #   TUN_TOKEN=your-shared-secret
-# Run tund from the directory that contains .env so it is picked up.
 go run ./cmd/tund
 
-# terminal 2: start client (ENV-only)
+# terminal 2: start client
 # Place .env in the directory you run `tun`:
 #   TUN_SERVER=ws://localhost:8080/tunnel
 #   TUN_LOCAL=http://localhost:3000
 #   TUN_ALLOW=POST /slack/events
 #   TUN_TOKEN=your-shared-secret
-
 go run ./cmd/tun
 
 # terminal 3: exercise the tunnel
@@ -91,7 +88,7 @@ goimports -local "$(go list -m)" -w .
 go test ./...
 go vet ./...
 
-# open pull request
+# create commit
 git add -A
 git commit -m "tund: add new feature" # commit with prefix, imperative mood, hard-wrap 72 cols
 ```

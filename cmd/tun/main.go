@@ -29,7 +29,7 @@ type rule struct {
 
 type client struct {
 	conn  *websocket.Conn
-	mu    *sync.Mutex
+	mu    sync.Mutex
 	local string
 	rules []rule
 	user  string
@@ -127,7 +127,6 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 
 	c := &client{
 		conn:  conn,
-		mu:    &sync.Mutex{},
 		local: local,
 		rules: rules,
 		user:  user,
