@@ -7,14 +7,15 @@ Tunnel local services to the public internet.
 The following example shows how to use `tun`
 with the [Slack Events API](https://docs.slack.dev/apis/events-api).
 
-Run `tund` on a server:
+Set up `tund` on a server:
 
 1. Create a new "Web Service" on [Render](https://render.com/)
 2. Set "Public Git Repository" to `https://github.com/croaky/tun`
 3. Set build command: `go build -o tund ./cmd/tund`
 4. Set start command: `./tund`
-5. Set environment variable `PORT` to `8080`
-6. Deploy
+5. Set environment variable `TUN_TOKEN` to something secret
+6. Set "Auto Deploy" to "Off"
+7. Deploy
 
 Endpoints:
 
