@@ -68,9 +68,12 @@ func run(server, local, token string, rules []rule) {
 	backoff := minDelay
 	for {
 		start := time.Now()
-		if err := connect(server, local, token, rules, interrupt); err != nil {
-			log.Printf("connection error: %v", err)
+		err := connect(server, local, token, rules, interrupt)
+		if err == nil {
+			// nil means graceful shutdown via interrupt
+			return
 		}
+		log.Printf("connection error: %v", err)
 
 		// Backoff with jitter; reset if the prior session lasted long enough
 		if time.Since(start) > backoffReset {
