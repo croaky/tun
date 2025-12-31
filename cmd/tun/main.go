@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,7 +45,7 @@ func (c *client) logf(format string, args ...any) {
 
 func main() {
 	log.SetFlags(0)
-	tun.LoadEnv(".env")
+	tun.Load(".env")
 
 	server := strings.TrimSpace(os.Getenv("TUN_SERVER"))
 	local := strings.TrimSpace(os.Getenv("TUN_LOCAL"))

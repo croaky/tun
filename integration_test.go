@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -110,16 +111,16 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 			resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable { // not 503 => connected
 				if resp.StatusCode != 200 || resp.Header.Get("X-Test") != "ok" {
-					_ = dump("tund", stdout, stderr)
-					_ = dump("tun", tunStdout, tunStderr)
+					dump(t, "tund", stdout, stderr)
+					dump(t, "tun", tunStdout, tunStderr)
 					t.Fatalf("forward status=%d header[X-Test]=%q body=%s", resp.StatusCode, resp.Header.Get("X-Test"), string(b))
 				}
 				break
 			}
 		}
 		if time.Now().After(readyDeadline) {
-			_ = dump("tund", stdout, stderr)
-			_ = dump("tun", tunStdout, tunStderr)
+			dump(t, "tund", stdout, stderr)
+			dump(t, "tun", tunStdout, tunStderr)
 			t.Fatal("tunnel did not become ready in time")
 		}
 		time.Sleep(150 * time.Millisecond)
@@ -129,20 +130,29 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 	case <-got:
 		// ok
 	case <-time.After(2 * time.Second):
-		_ = dump("tund", stdout, stderr)
-		_ = dump("tun", tunStdout, tunStderr)
+		dump(t, "tund", stdout, stderr)
+		dump(t, "tun", tunStdout, tunStderr)
 		t.Fatal("local server did not receive request")
 	}
 }
 
-func dump(name string, out, err io.Reader) error {
-	brOut := bufio.NewScanner(out)
-	brErr := bufio.NewScanner(err)
-	for brOut.Scan() {
-		fmt.Printf("[%s stdout] %s\n", name, brOut.Text())
-	}
-	for brErr.Scan() {
-		fmt.Printf("[%s stderr] %s\n", name, brErr.Text())
-	}
-	return nil
+func dump(t *testing.T, name string, out, err io.Reader) {
+	t.Helper()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		sc := bufio.NewScanner(out)
+		for sc.Scan() {
+			t.Logf("[%s stdout] %s", name, sc.Text())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		sc := bufio.NewScanner(err)
+		for sc.Scan() {
+			t.Logf("[%s stderr] %s", name, sc.Text())
+		}
+	}()
+	wg.Wait()
 }

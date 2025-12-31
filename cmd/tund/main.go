@@ -51,7 +51,7 @@ type server struct {
 
 func main() {
 	log.SetFlags(0)
-	tun.LoadEnv(".env")
+	tun.Load(".env")
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -207,7 +207,7 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	headers := map[string][]string(r.Header)
+	headers := r.Header
 
 	// Create request ID and response channel
 	reqID := newID()

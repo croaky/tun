@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// LoadEnv loads TUN_* environment variables from a .env file.
+// Load loads TUN_* environment variables from a .env file.
 // Only keys prefixed with "TUN_" are loaded; existing env vars are not overwritten.
-func LoadEnv(name string) {
+func Load(name string) {
 	data, err := os.ReadFile(name)
 	if err != nil {
 		return
@@ -34,7 +34,9 @@ func LoadEnv(name string) {
 			continue
 		}
 		if os.Getenv(k) == "" {
-			_ = os.Setenv(k, v)
+			if err := os.Setenv(k, v); err != nil {
+				log.Printf("env: failed to set %s: %v", k, err)
+			}
 		}
 	}
 }
