@@ -78,7 +78,7 @@ func TestLoadEnv(t *testing.T) {
 				os.Setenv(k, v)
 			}
 
-			LoadEnv(path)
+			Load(path)
 
 			// Check expected values
 			for k, want := range tt.wantEnv {
@@ -99,5 +99,5 @@ func TestLoadEnv(t *testing.T) {
 
 func TestLoadEnv_FileNotFound(t *testing.T) {
 	// Should not panic or error
-	LoadEnv("/nonexistent/path/.env")
+	Load("/nonexistent/path/.env")
 }

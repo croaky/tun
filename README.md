@@ -100,12 +100,12 @@ go run ./cmd/tun
 # terminal 3: exercise the tunnel
 curl -X POST http://localhost:8080/slack/events -d '{"test": true}' -H "Content-Type: application/json"
 
-# build & test
+# checks
 goimports -local "$(go list -m)" -w .
 go test ./...
 go vet ./...
 
-# create commit
+# commit
 git add -A
 git commit -m "tund: add new feature" # commit with prefix, imperative mood, hard-wrap 72 cols
 ```
