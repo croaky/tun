@@ -13,8 +13,15 @@ func Load(name string) {
 	if err != nil {
 		return
 	}
+	var openQuote rune
 	for _, ln := range strings.Split(string(data), "\n") {
 		line := strings.TrimSpace(ln)
+		if openQuote != 0 {
+			if strings.ContainsRune(line, openQuote) {
+				openQuote = 0
+			}
+			continue
+		}
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -28,6 +35,13 @@ func Load(name string) {
 		}
 		k := strings.TrimSpace(line[:i])
 		v := strings.TrimSpace(line[i+1:])
+		if len(v) > 0 && (v[0] == '"' || v[0] == '\'') {
+			q := rune(v[0])
+			if !strings.ContainsRune(v[1:], q) {
+				openQuote = q
+				continue
+			}
+		}
 		v = strings.Trim(v, "\"'")
 		// Only import our own keys (plus PORT) to avoid clobbering app env
 		if !strings.HasPrefix(k, "TUN_") && k != "PORT" {
