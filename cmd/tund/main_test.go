@@ -7,9 +7,13 @@ import (
 	"testing"
 
 	"github.com/croaky/tun"
+
+	"github.com/croaky/is"
 )
 
 func TestHandleTunnelAuthUnauthorized(t *testing.T) {
+	is := is.New(t)
+
 	s := &server{
 		token:   "secret",
 		pending: make(map[string]chan tun.Response),
@@ -19,34 +23,30 @@ func TestHandleTunnelAuthUnauthorized(t *testing.T) {
 
 	s.handleTunnel(rw, r)
 
-	if rw.Code != http.StatusUnauthorized {
-		t.Fatalf("got status %d, want %d", rw.Code, http.StatusUnauthorized)
-	}
+	is.Eq(rw.Code, http.StatusUnauthorized)
 }
 
 func TestNewID(t *testing.T) {
+	is := is.New(t)
+
 	id := newID()
 
 	// Should be 32 hex chars (16 bytes)
-	if len(id) != 32 {
-		t.Errorf("newID() length = %d, want 32", len(id))
-	}
+	is.Eq(len(id), 32)
 
 	// Should be valid hex
 	for _, c := range id {
-		if !strings.ContainsRune("0123456789abcdef", c) {
-			t.Errorf("newID() contains non-hex char: %c", c)
-		}
+		is.True(strings.ContainsRune("0123456789abcdef", c))
 	}
 
 	// Should be unique
 	id2 := newID()
-	if id == id2 {
-		t.Error("newID() returned duplicate IDs")
-	}
+	is.NotEq(id, id2)
 }
 
 func TestHandleRequest_NoTunnel(t *testing.T) {
+	is := is.New(t)
+
 	s := &server{
 		token:   "secret",
 		pending: make(map[string]chan tun.Response),
@@ -58,10 +58,6 @@ func TestHandleRequest_NoTunnel(t *testing.T) {
 
 	s.handleRequest(rw, r)
 
-	if rw.Code != http.StatusServiceUnavailable {
-		t.Errorf("got status %d, want %d", rw.Code, http.StatusServiceUnavailable)
-	}
-	if !strings.Contains(rw.Body.String(), "no tunnel connected") {
-		t.Errorf("body = %q, want 'no tunnel connected'", rw.Body.String())
-	}
+	is.Eq(rw.Code, http.StatusServiceUnavailable)
+	is.True(strings.Contains(rw.Body.String(), "no tunnel connected"))
 }

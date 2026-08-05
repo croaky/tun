@@ -14,15 +14,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/croaky/is"
 )
 
 // pickFreePort reserves a free TCP port by binding :0 and closing.
 func pickFreePort(t *testing.T) string {
 	t.Helper()
+	is := is.New(t)
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen :0: %v", err)
-	}
+	is.NoErr(err)
 	addr := ln.Addr().(*net.TCPAddr)
 	p := fmt.Sprintf("%d", addr.Port)
 	_ = ln.Close()
@@ -30,11 +32,14 @@ func pickFreePort(t *testing.T) string {
 }
 
 func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
+	is := is.New(t)
+
 	// Local HTTP service to receive tunneled requests
 	got := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/slack/events" {
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			return
 		}
 		w.Header().Set("X-Test", "ok")
 		w.WriteHeader(http.StatusOK)
@@ -55,9 +60,7 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	t.Cleanup(cancel)
 	root, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	is.NoErr(err)
 
 	absTund := "./cmd/tund"
 	tund := exec.CommandContext(ctx, "go", "run", absTund)
@@ -65,9 +68,7 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 	tund.Env = []string{"PORT=" + port, "TUN_TOKEN=itest", "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
 	stderr, _ := tund.StderrPipe()
 	stdout, _ := tund.StdoutPipe()
-	if err := tund.Start(); err != nil {
-		t.Fatalf("start tund: %v", err)
-	}
+	is.NoErr(tund.Start())
 	t.Cleanup(func() { _ = tund.Process.Kill() })
 
 	// Wait for /health ready
@@ -97,9 +98,7 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 	}
 	tunStdout, _ := tunCmd.StdoutPipe()
 	tunStderr, _ := tunCmd.StderrPipe()
-	if err := tunCmd.Start(); err != nil {
-		t.Fatalf("start tun: %v", err)
-	}
+	is.NoErr(tunCmd.Start())
 	t.Cleanup(func() { _ = tunCmd.Process.Kill() })
 
 	// Poll until tunnel connected (server stops returning 503), then assert 200/ok

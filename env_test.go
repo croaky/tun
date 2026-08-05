@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/croaky/is"
 )
 
 func TestLoadEnv(t *testing.T) {
@@ -80,11 +82,12 @@ func TestLoadEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			is := is.NewRelaxed(t)
+
 			dir := t.TempDir()
 			path := filepath.Join(dir, ".env")
-			if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			err := os.WriteFile(path, []byte(tt.content), 0o644)
+			is.NoErr(err)
 
 			for k := range tt.wantEnv {
 				_ = os.Unsetenv(k)
@@ -99,15 +102,11 @@ func TestLoadEnv(t *testing.T) {
 			Load(path)
 
 			for k, want := range tt.wantEnv {
-				if got := os.Getenv(k); got != want {
-					t.Errorf("%s = %q, want %q", k, got, want)
-				}
+				is.Eq(os.Getenv(k), want)
 			}
 
 			for k := range tt.wantSkip {
-				if got := os.Getenv(k); got != "" {
-					t.Errorf("%s should not be set, got %q", k, got)
-				}
+				is.Eq(os.Getenv(k), "")
 			}
 		})
 	}

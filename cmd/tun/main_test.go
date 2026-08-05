@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/croaky/is"
 )
 
 func TestParseRules(t *testing.T) {
@@ -21,26 +23,22 @@ func TestParseRules(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			is := is.New(t)
+
 			rules, err := parseRules(tt.args)
 			if tt.wantErr {
-				if err == nil {
-					t.Error("want error, got nil")
-				}
+				is.HasErr(err)
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-			if got := len(rules); got != tt.wantLen {
-				t.Errorf("got %d rules, want %d", got, tt.wantLen)
-			}
+			is.NoErr(err)
+			is.Eq(len(rules), tt.wantLen)
 		})
 	}
 }
 
 func TestAllowed(t *testing.T) {
-	rules, _ := parseRules([]string{"POST", "/slack/events", "GET", "/health"})
+	rules, err := parseRules([]string{"POST", "/slack/events", "GET", "/health"})
+	is.New(t).NoErr(err)
 
 	tests := []struct {
 		method string
@@ -59,9 +57,9 @@ func TestAllowed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
-			if got := allowed(rules, tt.method, tt.path); got != tt.want {
-				t.Errorf("allowed(%q, %q) = %v, want %v", tt.method, tt.path, got, tt.want)
-			}
+			is := is.New(t)
+
+			is.Eq(allowed(rules, tt.method, tt.path), tt.want)
 		})
 	}
 }
