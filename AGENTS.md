@@ -44,20 +44,14 @@ the case.
 
 ## Checks
 
-`bin/pre-push` runs them, and it runs the Go checks only when the
-change touches a `.go` file:
+The root `Checkfile` lists the checks CI runs. Run them before a
+commit:
 
 ```sh
 goimports -local "$(go list -m)" -w .
 go vet ./...
 go test ./...
 deadcode -test ./...
-```
-
-This repo has no CI. The hook is the gate, so install it:
-
-```sh
-git config core.hooksPath bin
 ```
 
 ## Commits

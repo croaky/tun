@@ -14,7 +14,7 @@ func Load(name string) {
 		return
 	}
 	var openQuote rune
-	for _, ln := range strings.Split(string(data), "\n") {
+	for ln := range strings.SplitSeq(string(data), "\n") {
 		line := strings.TrimSpace(ln)
 		if openQuote != 0 {
 			if strings.ContainsRune(line, openQuote) {
@@ -25,8 +25,8 @@ func Load(name string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "export ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		if rest, ok := strings.CutPrefix(line, "export "); ok {
+			line = strings.TrimSpace(rest)
 		}
 		i := strings.IndexByte(line, '=')
 		if i <= 0 {

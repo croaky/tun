@@ -81,7 +81,6 @@ Requests timeout after 30 seconds.
 ```sh
 # setup
 brew install go
-git config core.hooksPath bin
 git checkout -b user/feature
 
 # terminal 1: start server

@@ -145,12 +145,18 @@ func dump(t *testing.T, name string, out, err io.Reader) {
 		for sc.Scan() {
 			t.Logf("[%s stdout] %s", name, sc.Text())
 		}
+		if e := sc.Err(); e != nil {
+			t.Logf("[%s stdout] read: %v", name, e)
+		}
 	}()
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(err)
 		for sc.Scan() {
 			t.Logf("[%s stderr] %s", name, sc.Text())
+		}
+		if e := sc.Err(); e != nil {
+			t.Logf("[%s stderr] read: %v", name, e)
 		}
 	}()
 	wg.Wait()
