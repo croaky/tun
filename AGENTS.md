@@ -44,15 +44,37 @@ the case.
 
 ## Checks
 
-The root `Checkfile` lists the checks CI runs. Run them before a
-commit:
+The root `Checkfile` lists the checks CI runs on every push. Run the
+same things before a commit:
 
 ```sh
-goimports -local "$(go list -m)" -w .
+go tool goimports -local "$(go list -m)" -w .
 go vet ./...
 go test ./...
-deadcode -test ./...
+go tool deadcode -test ./...
+git ls-files -z '*.go' | xargs -0 gopls check -severity=hint
 ```
+
+Pin every tool a check runs. Declare it with
+`go get -tool <pkg>@<version>`, so `go.mod` and `go.sum` hold its
+version and checksum, and run it as `go tool <name>`. Do not run
+`go run pkg@latest` or `go install pkg@latest` in a `Checkfile`, a
+script, or CI. A moving version makes the same commit pass one week
+and fail the next, and it runs new tool code nobody reviewed. A pinned
+tool changes in a change, where the diff shows the update and CI runs
+it.
+
+Keep the `tool` lines in `go.mod`, because no module requires tun.
+A `go get -tool` can raise a requirement, and the build then links the
+newer version. Keep the raise only when the tests pass and nothing
+holds the old version on purpose. Otherwise, and in a library, put the
+tools in a `tools.mod` and run them as
+`go tool -modfile=tools.mod <name>`. The hml and uni repos show that
+form.
+
+Pin the tool, not its data. The `weekly_govulncheck` check reads the
+live vulnerability database on every run, so it still finds advisories
+published after the commit. Never vendor or cache that data.
 
 ## Commits
 

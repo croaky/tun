@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -56,16 +57,25 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 	httpURL := fmt.Sprintf("http://127.0.0.1:%s/health", port)
 	forwardURL := fmt.Sprintf("http://127.0.0.1:%s/slack/events", port)
 
-	// Start tund (absolute path, run from a clean temp dir so it won't read repo .env)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	t.Cleanup(cancel)
 	root, err := os.Getwd()
 	is.NoErr(err)
 
-	absTund := "./cmd/tund"
-	tund := exec.CommandContext(ctx, "go", "run", absTund)
+	// Build both binaries before the clock starts. On a cold build cache
+	// the build compiles the standard library, which can take longer
+	// than the readiness waits below allow.
+	bin := t.TempDir()
+	build := exec.Command("go", "build", "-o", bin, "./cmd/tund", "./cmd/tun")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+
+	tund := exec.CommandContext(ctx, filepath.Join(bin, "tund"))
 	tund.Dir = root
-	tund.Env = []string{"PORT=" + port, "TUN_TOKEN=itest", "PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+	tund.Env = append(os.Environ(), "PORT="+port, "TUN_TOKEN=itest", "PATH="+os.Getenv("PATH"), "HOME="+os.Getenv("HOME"))
 	stderr, _ := tund.StderrPipe()
 	stdout, _ := tund.StdoutPipe()
 	is.NoErr(tund.Start())
@@ -85,17 +95,14 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	absTun := "./cmd/tun"
-	tunCmd := exec.CommandContext(ctx, "go", "run", absTun)
+	tunCmd := exec.CommandContext(ctx, filepath.Join(bin, "tun"))
 	tunCmd.Dir = root
-	tunCmd.Env = []string{
-		"TUN_SERVER=" + wsURL,
-		"TUN_LOCAL=" + srv.URL,
+	tunCmd.Env = append(os.Environ(),
+		"TUN_SERVER="+wsURL,
+		"TUN_LOCAL="+srv.URL,
 		"TUN_ALLOW=POST /slack/events",
 		"TUN_TOKEN=itest",
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-	}
+	)
 	tunStdout, _ := tunCmd.StdoutPipe()
 	tunStderr, _ := tunCmd.StderrPipe()
 	is.NoErr(tunCmd.Start())
