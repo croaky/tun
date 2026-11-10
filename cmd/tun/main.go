@@ -136,6 +136,8 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 
 	c.logf("connected to %s, forwarding to %s", server, local)
 
+	conn.SetReadLimit(tun.MaxMessage)
+
 	conn.SetReadDeadline(time.Now().Add(tun.PongWait))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(tun.PongWait))
@@ -246,11 +248,14 @@ func (c *client) forward(req tun.Request) tun.Response {
 
 	resp.Status = res.StatusCode
 	resp.Headers = map[string][]string(res.Header)
-	resp.Body, err = io.ReadAll(res.Body)
+	resp.Body, err = io.ReadAll(io.LimitReader(res.Body, tun.MaxBody+1))
 	if err != nil {
 		log.Printf("read body error: %v", err)
-		resp.Status = http.StatusBadGateway
-		resp.Body = []byte(err.Error())
+		return tun.Response{ID: req.ID, Status: http.StatusBadGateway, Body: []byte(err.Error())}
+	}
+	if len(resp.Body) > tun.MaxBody {
+		log.Printf("response body too large: %s %s", req.Method, req.Path)
+		return tun.Response{ID: req.ID, Status: http.StatusBadGateway, Body: []byte("response body too large")}
 	}
 	return resp
 }
@@ -260,6 +265,11 @@ func (c *client) send(resp tun.Response) {
 	if err != nil {
 		log.Printf("marshal error: %v", err)
 		return
+	}
+	if len(msg) > tun.MaxMessage {
+		// tund closes the tunnel on a message above its read limit.
+		log.Printf("response too large: %d bytes", len(msg))
+		msg, _ = json.Marshal(tun.Response{ID: resp.ID, Status: http.StatusBadGateway, Body: []byte("response too large")})
 	}
 	c.mu.Lock()
 	err = c.conn.WriteMessage(websocket.TextMessage, msg)

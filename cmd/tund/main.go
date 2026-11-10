@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,10 +25,26 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-const (
-	responseTimeout = 30 * time.Second
-	writeWait       = 5 * time.Second
-)
+const responseTimeout = 30 * time.Second
+
+// writeWait is how long a write to the tunnel can take. Tests change it.
+var writeWait = 5 * time.Second
+
+// tunnel is one tunnel connection. Its mutex puts writes in sequence.
+// It is not server.mu, so a slow write does not stop other requests.
+type tunnel struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+// write sends msg to the tunnel peer. It fails when the peer does not
+// take msg within writeWait.
+func (t *tunnel) write(msg []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_ = t.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	return t.conn.WriteMessage(websocket.TextMessage, msg)
+}
 
 func ms(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000
@@ -44,7 +61,7 @@ func logf(user, format string, args ...any) {
 type server struct {
 	token   string
 	mu      sync.RWMutex
-	conn    *websocket.Conn
+	conn    *tunnel
 	user    string
 	pending map[string]chan tun.Response
 }
@@ -77,8 +94,16 @@ func main() {
 	mux.HandleFunc("/tunnel", s.handleTunnel)
 	mux.HandleFunc("/", s.handleRequest)
 
+	// The timeouts stop a slow client from holding a request open.
+	// gorilla/websocket clears them on /tunnel when it upgrades.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       responseTimeout,
+	}
 	log.Printf("tund listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(srv.ListenAndServe())
 }
 
 func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
@@ -94,22 +119,25 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		log.Printf("websocket upgrade error: %v", err)
 		return
 	}
+	defer conn.Close()
+	conn.SetReadLimit(tun.MaxMessage)
 
 	user := r.Header.Get("X-Tunnel-User")
 
 	// Close existing connection if any (single tunnel at a time)
+	tn := &tunnel{conn: conn}
 	s.mu.Lock()
 	oldConn := s.conn
 	if oldConn != nil {
 		logf(s.user, "new tunnel connection, closing previous")
 	}
-	s.conn = conn
+	s.conn = tn
 	s.user = user
 	s.mu.Unlock()
 
 	// Close old connection outside of lock
 	if oldConn != nil {
-		_ = oldConn.Close()
+		_ = oldConn.conn.Close()
 	}
 
 	logf(user, "tunnel connected")
@@ -129,9 +157,8 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		for {
 			select {
 			case <-t.C:
-				s.mu.Lock()
+				// WriteControl is safe with other writes, so it takes no lock.
 				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
-				s.mu.Unlock()
 				if err != nil {
 					log.Printf("tunnel ping error: %v", err)
 					return
@@ -148,7 +175,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Don't log error if this connection was replaced by a new one
 			s.mu.RLock()
-			replaced := s.conn != conn
+			replaced := s.conn != tn
 			s.mu.RUnlock()
 			normalClose := websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
 			if !replaced && !normalClose {
@@ -174,8 +201,8 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	close(done)
 
 	s.mu.Lock()
-	replaced := s.conn != conn
-	if s.conn == conn {
+	replaced := s.conn != tn
+	if s.conn == tn {
 		s.conn = nil
 		s.user = ""
 	}
@@ -199,50 +226,52 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read request body
+	// Read request body, up to tun.MaxBody
+	r.Body = http.MaxBytesReader(w, r.Body, tun.MaxBody)
 	body, err := io.ReadAll(r.Body)
+	if tooBig := (*http.MaxBytesError)(nil); errors.As(err, &tooBig) {
+		log.Printf("%d %s %s %.2fms", http.StatusRequestEntityTooLarge, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err != nil {
 		log.Printf("%d %s %s %.2fms", http.StatusBadRequest, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
 
-	headers := r.Header
-
-	// Create request ID and response channel
-	reqID := newID()
-	respChan := make(chan tun.Response, 1)
-
-	s.mu.Lock()
-	s.pending[reqID] = respChan
-	s.mu.Unlock()
-
 	// Send request to tunnel client
+	reqID := newID()
 	req := tun.Request{
 		ID:      reqID,
 		Method:  r.Method,
 		Path:    r.URL.RequestURI(),
-		Headers: headers,
+		Headers: r.Header,
 		Body:    body,
 	}
 
 	msg, err := json.Marshal(req)
 	if err != nil {
-		s.mu.Lock()
-		delete(s.pending, reqID)
-		s.mu.Unlock()
 		log.Printf("%d %s %s %.2fms", http.StatusInternalServerError, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "marshal error", http.StatusInternalServerError)
 		return
 	}
+	if len(msg) > tun.MaxMessage {
+		log.Printf("%d %s %s %.2fms", http.StatusRequestEntityTooLarge, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 
+	respChan := make(chan tun.Response, 1)
 	s.mu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, msg)
+	s.pending[reqID] = respChan
 	s.mu.Unlock()
-	if err != nil {
+
+	if err := conn.write(msg); err != nil {
 		s.mu.Lock()
 		delete(s.pending, reqID)
 		s.mu.Unlock()
+		s.drop(conn)
 		log.Printf("%d %s %s %.2fms", http.StatusBadGateway, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "tunnel write error", http.StatusBadGateway)
 		return
@@ -266,6 +295,19 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%d %s %s %.2fms", http.StatusGatewayTimeout, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "tunnel timeout", http.StatusGatewayTimeout)
 	}
+}
+
+// drop closes t after a failed write. The close stops each other write
+// to t. If t is still the active tunnel, drop clears it, so the next
+// request gets 503 until the client connects again.
+func (s *server) drop(t *tunnel) {
+	_ = t.conn.Close()
+	s.mu.Lock()
+	if s.conn == t {
+		s.conn = nil
+		s.user = ""
+	}
+	s.mu.Unlock()
 }
 
 func newID() string {

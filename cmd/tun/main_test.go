@@ -5,13 +5,63 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/croaky/is"
 
 	"github.com/croaky/tun"
 )
+
+func TestForwardResponseTooLarge(t *testing.T) {
+	is := is.New(t)
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, tun.MaxBody+1))
+	}))
+	t.Cleanup(local.Close)
+	rules, err := parseRules([]string{"GET", "/big"})
+	is.NoErr(err)
+	c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+
+	resp := c.forward(tun.Request{ID: "1", Method: "GET", Path: "/big"})
+
+	is.Eq(resp.Status, http.StatusBadGateway)
+	is.True(len(resp.Body) < tun.MaxBody)
+}
+
+// TestConnectReadLimit checks that the client closes the tunnel when the
+// server sends a message above tun.MaxMessage.
+func TestConnectReadLimit(t *testing.T) {
+	var upgrader websocket.Upgrader
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteMessage(websocket.TextMessage, make([]byte, tun.MaxMessage+1))
+		time.Sleep(3 * time.Second) // keep the connection open
+	}))
+	t.Cleanup(srv.Close)
+
+	done := make(chan error, 1)
+	go func() {
+		url := "ws" + strings.TrimPrefix(srv.URL, "http")
+		done <- connect(url, "http://127.0.0.1:1", "secret", nil, make(chan os.Signal))
+	}()
+
+	select {
+	case err := <-done:
+		is.New(t).HasErr(err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("client kept the tunnel open")
+	}
+}
 
 func TestParseRules(t *testing.T) {
 	tests := []struct {

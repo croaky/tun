@@ -13,6 +13,16 @@ const (
 	PingPeriod = 20 * time.Second
 )
 
+// Size limits for the tunnel.
+// MaxBody is the largest request or response body that the tunnel
+// carries. MaxMessage is the largest WebSocket message that each side
+// reads. JSON encodes a body in base64, which adds one third, and the
+// rest of MaxMessage is for the headers.
+const (
+	MaxBody    = 1 << 20
+	MaxMessage = 2 * MaxBody
+)
+
 // Request is sent from server to client through the WebSocket tunnel.
 type Request struct {
 	ID      string              `json:"id"`

@@ -77,6 +77,9 @@ POST /slack/events
 
 The client auto-reconnects with exponential backoff (500ms to 30s).
 Requests timeout after 30 seconds.
+The tunnel carries bodies of up to 1 MiB.
+`tund` returns 413 for a larger request body,
+and `tun` returns 502 for a larger response body.
 
 ## Developing tun
 
