@@ -1,7 +1,6 @@
 # client, tund: bound tunnel writes, locks, and body sizes
 
-Status: Planned. Do this after `001-client-no-redirects.md`, because
-both change `handleRequest` in `cmd/tun/main.go`.
+Status: Planned.
 
 Findings:
 

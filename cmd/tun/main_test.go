@@ -1,9 +1,16 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"sync/atomic"
 	"testing"
 
 	"github.com/croaky/is"
+
+	"github.com/croaky/tun"
 )
 
 func TestParseRules(t *testing.T) {
@@ -61,5 +68,65 @@ func TestAllowed(t *testing.T) {
 
 			is.Eq(allowed(rules, tt.method, tt.path), tt.want)
 		})
+	}
+}
+
+// TestForwardDoesNotFollowRedirects checks that the client sends a 3xx
+// from the local service back to the caller. The client must not send a
+// request to the redirect target, because TUN_ALLOW did not check it.
+func TestForwardDoesNotFollowRedirects(t *testing.T) {
+	var otherHits atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherHits.Add(1)
+		_, _ = w.Write([]byte("secret"))
+	}))
+	t.Cleanup(other.Close)
+	otherURL, err := url.Parse(other.URL)
+	is.New(t).NoErr(err)
+
+	var location string
+	var status int
+	var privateHits atomic.Int32
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/private" {
+			privateHits.Add(1)
+			_, _ = w.Write([]byte("secret"))
+			return
+		}
+		w.Header().Set("Location", location)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(local.Close)
+
+	rules, err := parseRules([]string{"POST", "/slack/events"})
+	is.New(t).NoErr(err)
+	c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+
+	targets := map[string]string{
+		"same service": "/private",
+		"other port":   other.URL + "/",
+		"other host":   "http://localhost:" + otherURL.Port() + "/",
+	}
+	for _, code := range []int{301, 302, 303, 307, 308} {
+		for name, target := range targets {
+			t.Run(fmt.Sprintf("%d %s", code, name), func(t *testing.T) {
+				is := is.New(t)
+				status, location = code, target
+				privateHits.Store(0)
+				otherHits.Store(0)
+
+				resp := c.forward(tun.Request{
+					ID:     "1",
+					Method: "POST",
+					Path:   "/slack/events",
+					Body:   []byte("{}"),
+				})
+
+				is.Eq(resp.Status, code)
+				is.Eq(http.Header(resp.Headers).Get("Location"), target)
+				is.Eq(privateHits.Load(), int32(0))
+				is.Eq(otherHits.Load(), int32(0))
+			})
+		}
 	}
 }

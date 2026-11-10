@@ -56,6 +56,8 @@ TUN_TOKEN=your-shared-secret
 
 `TUN_ALLOW` accepts space-separated `METHOD /path` pairs (exact match, no wildcards).
 All requests not matching a rule return 403 Forbidden.
+`tun` does not follow redirects from the local service.
+It returns each 3xx response to the caller, so `TUN_ALLOW` checks the next request.
 
 `TUN_TOKEN` is required on both client and server.
 The client authenticates using `Authorization: Bearer <token>`.

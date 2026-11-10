@@ -33,6 +33,7 @@ type client struct {
 	local string
 	rules []rule
 	user  string
+	http  *http.Client
 }
 
 func (c *client) logf(format string, args ...any) {
@@ -130,6 +131,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 		local: local,
 		rules: rules,
 		user:  user,
+		http:  newHTTPClient(),
 	}
 
 	c.logf("connected to %s, forwarding to %s", server, local)
@@ -191,7 +193,25 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	}
 }
 
+// newHTTPClient returns the client for requests to the local service.
+// It does not follow redirects. TUN_ALLOW checks only the first
+// request, so the client sends each 3xx back to the caller.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 func (c *client) handleRequest(req tun.Request) {
+	c.send(c.forward(req))
+}
+
+// forward checks req against TUN_ALLOW, sends it to the local service,
+// and returns the response for the tunnel.
+func (c *client) forward(req tun.Request) tun.Response {
 	log.Printf("%s %s", req.Method, req.Path)
 
 	resp := tun.Response{ID: req.ID}
@@ -200,16 +220,14 @@ func (c *client) handleRequest(req tun.Request) {
 		log.Printf("blocked: %s %s", req.Method, req.Path)
 		resp.Status = http.StatusForbidden
 		resp.Body = []byte("forbidden by tunnel filter")
-		c.send(resp)
-		return
+		return resp
 	}
 
 	r, err := http.NewRequest(req.Method, c.local+req.Path, bytes.NewReader(req.Body))
 	if err != nil {
 		resp.Status = http.StatusInternalServerError
 		resp.Body = []byte(err.Error())
-		c.send(resp)
-		return
+		return resp
 	}
 	for k, vs := range req.Headers {
 		for _, v := range vs {
@@ -217,13 +235,12 @@ func (c *client) handleRequest(req tun.Request) {
 		}
 	}
 
-	res, err := (&http.Client{Timeout: requestTimeout}).Do(r)
+	res, err := c.http.Do(r)
 	if err != nil {
 		log.Printf("local request error: %v", err)
 		resp.Status = http.StatusBadGateway
 		resp.Body = []byte(err.Error())
-		c.send(resp)
-		return
+		return resp
 	}
 	defer res.Body.Close()
 
@@ -235,7 +252,7 @@ func (c *client) handleRequest(req tun.Request) {
 		resp.Status = http.StatusBadGateway
 		resp.Body = []byte(err.Error())
 	}
-	c.send(resp)
+	return resp
 }
 
 func (c *client) send(resp tun.Response) {
