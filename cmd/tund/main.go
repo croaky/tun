@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +25,12 @@ var upgrader = websocket.Upgrader{
 }
 
 const responseTimeout = 30 * time.Second
+
+// preallocBody is the largest Content-Length for which tund allocates
+// the whole body buffer before the body arrives. The caller sets
+// Content-Length, so tund does not trust a larger one. A Slack event is
+// smaller.
+const preallocBody = 64 << 10
 
 // writeWait is how long a write to the tunnel can take. Tests change it.
 var writeWait = 5 * time.Second
@@ -226,9 +231,14 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read request body, up to tun.MaxBody
+	// Read request body, up to tun.MaxBody. A Content-Length above the
+	// limit gets the 413 before tund reads the body.
 	r.Body = http.MaxBytesReader(w, r.Body, tun.MaxBody)
-	body, err := io.ReadAll(r.Body)
+	var body []byte
+	err := error(&http.MaxBytesError{Limit: tun.MaxBody})
+	if r.ContentLength <= tun.MaxBody {
+		body, err = tun.ReadBody(r.Body, r.ContentLength, preallocBody)
+	}
 	if tooBig := (*http.MaxBytesError)(nil); errors.As(err, &tooBig) {
 		log.Printf("%d %s %s %.2fms", http.StatusRequestEntityTooLarge, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)

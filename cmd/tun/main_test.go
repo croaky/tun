@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,6 +121,111 @@ func TestAllowed(t *testing.T) {
 			is := is.New(t)
 
 			is.Eq(allowed(rules, tt.method, tt.path), tt.want)
+		})
+	}
+}
+
+func quietLog(b *testing.B) {
+	b.Helper()
+	log.SetOutput(io.Discard)
+	b.Cleanup(func() { log.SetOutput(os.Stderr) })
+}
+
+var benchSizes = []int{1 << 10, 64 << 10, tun.MaxBody}
+
+// BenchmarkForward sends a Slack event to a local service through
+// forward. The sizes are for the response body, up to tun.MaxBody.
+func BenchmarkForward(b *testing.B) {
+	quietLog(b)
+	for _, size := range benchSizes {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			out := bytes.Repeat([]byte("x"), size)
+			local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.Header().Set("Content-Type", "text/plain")
+				_, _ = w.Write(out)
+			}))
+			b.Cleanup(local.Close)
+			rules, err := parseRules([]string{"POST", "/slack/events", "GET", "/health"})
+			if err != nil {
+				b.Fatal(err)
+			}
+			c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+			req := tun.Request{
+				ID:     "0123456789abcdef0123456789abcdef",
+				Method: "POST",
+				Path:   "/slack/events",
+				Headers: map[string][]string{
+					"Content-Type":              {"application/json"},
+					"X-Slack-Request-Timestamp": {"1531420618"},
+				},
+				Body: []byte(`{"type":"event_callback","event":{"type":"message"}}`),
+			}
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			for b.Loop() {
+				if resp := c.forward(req); resp.Status != http.StatusOK {
+					b.Fatalf("status %d", resp.Status)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkForwardBlocked measures a request that TUN_ALLOW blocks.
+func BenchmarkForwardBlocked(b *testing.B) {
+	quietLog(b)
+	rules, err := parseRules([]string{"POST", "/slack/events", "GET", "/health"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	c := &client{local: "http://127.0.0.1:1", rules: rules}
+	req := tun.Request{ID: "1", Method: "GET", Path: "/admin"}
+	b.ReportAllocs()
+	for b.Loop() {
+		if resp := c.forward(req); resp.Status != http.StatusForbidden {
+			b.Fatalf("status %d", resp.Status)
+		}
+	}
+}
+
+// BenchmarkSend writes a response to a tunnel peer that discards it.
+func BenchmarkSend(b *testing.B) {
+	quietLog(b)
+	var upgrader websocket.Upgrader
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.SetReadLimit(tun.MaxMessage)
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				return
+			}
+		}
+	}))
+	b.Cleanup(srv.Close)
+	for _, size := range benchSizes {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = conn.Close() })
+			c := &client{conn: conn}
+			resp := tun.Response{
+				ID:      "0123456789abcdef0123456789abcdef",
+				Status:  http.StatusOK,
+				Headers: map[string][]string{"Content-Type": {"text/plain"}},
+				Body:    bytes.Repeat([]byte("x"), size),
+			}
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			for b.Loop() {
+				c.send(resp)
+			}
 		})
 	}
 }

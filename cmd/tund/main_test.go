@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +151,25 @@ func TestHandleRequestBodyTooLarge(t *testing.T) {
 	is.HasErr(err) // the peer got no message
 }
 
+// TestHandleRequestBodyTooLargeNoLength checks the 413 for a body
+// with no Content-Length, which tund knows only as it reads.
+func TestHandleRequestBodyTooLargeNoLength(t *testing.T) {
+	is := is.New(t)
+	s := newServer()
+	peer := dialPeer(t, startTunnelServer(t, s))
+	waitConn(t, s, nil, time.Second)
+
+	r := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(make([]byte, tun.MaxBody+1)))
+	r.ContentLength = -1
+	rw := httptest.NewRecorder()
+	s.handleRequest(rw, r)
+
+	is.Eq(rw.Code, http.StatusRequestEntityTooLarge)
+	_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _, err := peer.ReadMessage()
+	is.HasErr(err) // the peer got no message
+}
+
 func TestHandleRequestStalledPeer(t *testing.T) {
 	is := is.New(t)
 	defer func(d time.Duration) { writeWait = d }(writeWait)
@@ -221,6 +245,102 @@ func TestHandleRequestWriteDeadline(t *testing.T) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	is.True(s.conn == nil) // the server dropped the stalled tunnel
+}
+
+// echoPeer connects a tunnel peer that answers each request with 200
+// and a short body, as the tun client does for a Slack event.
+func echoPeer(b *testing.B, url string) {
+	b.Helper()
+	h := http.Header{}
+	h.Set("Authorization", "Bearer secret")
+	conn, _, err := websocket.DefaultDialer.Dial(url, h)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		for {
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var req tun.Request
+			if err := json.Unmarshal(msg, &req); err != nil {
+				return
+			}
+			out, _ := json.Marshal(tun.Response{
+				ID:      req.ID,
+				Status:  http.StatusOK,
+				Headers: map[string][]string{"Content-Type": {"text/plain"}},
+				Body:    []byte("ok"),
+			})
+			if err := conn.WriteMessage(websocket.TextMessage, out); err != nil {
+				return
+			}
+		}
+	}()
+}
+
+func quietLog(b *testing.B) {
+	b.Helper()
+	log.SetOutput(io.Discard)
+	b.Cleanup(func() { log.SetOutput(os.Stderr) })
+}
+
+// BenchmarkHandleRequest sends a POST through tund and a tunnel peer.
+// The sizes are a Slack event, a large form, and tun.MaxBody.
+func BenchmarkHandleRequest(b *testing.B) {
+	quietLog(b)
+	for _, size := range []int{1 << 10, 64 << 10, tun.MaxBody} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			s := newServer()
+			ts := httptest.NewServer(http.HandlerFunc(s.handleTunnel))
+			b.Cleanup(ts.Close)
+			echoPeer(b, "ws"+strings.TrimPrefix(ts.URL, "http"))
+			for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+				s.mu.RLock()
+				c := s.conn
+				s.mu.RUnlock()
+				if c != nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					b.Fatal("no tunnel")
+				}
+			}
+
+			body := bytes.Repeat([]byte(`{"type":"event_callback"}`), size/25+1)[:size]
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			for b.Loop() {
+				r := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(body))
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("X-Slack-Signature", "v0=a2114d57b48eac39b9ad189dd8316235a7b4a8d21a10bd27519666489c69b503")
+				r.Header.Set("X-Slack-Request-Timestamp", "1531420618")
+				rw := httptest.NewRecorder()
+				s.handleRequest(rw, r)
+				if rw.Code != http.StatusOK {
+					b.Fatalf("status %d", rw.Code)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkHandleRequestTooLarge measures the 413 path for a body
+// above tun.MaxBody.
+func BenchmarkHandleRequestTooLarge(b *testing.B) {
+	quietLog(b)
+	s := newServer()
+	s.conn = &tunnel{} // the 413 returns before a write
+	body := make([]byte, tun.MaxBody+1)
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if rw := post(s, body); rw.Code != http.StatusRequestEntityTooLarge {
+			b.Fatalf("status %d", rw.Code)
+		}
+	}
 }
 
 func TestHandleTunnelReadLimit(t *testing.T) {

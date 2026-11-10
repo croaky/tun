@@ -248,7 +248,9 @@ func (c *client) forward(req tun.Request) tun.Response {
 
 	resp.Status = res.StatusCode
 	resp.Headers = map[string][]string(res.Header)
-	resp.Body, err = io.ReadAll(io.LimitReader(res.Body, tun.MaxBody+1))
+	// TUN_LOCAL names a service that the user trusts, so the client
+	// takes its Content-Length up to the limit.
+	resp.Body, err = tun.ReadBody(io.LimitReader(res.Body, tun.MaxBody+1), res.ContentLength, tun.MaxBody+1)
 	if err != nil {
 		log.Printf("read body error: %v", err)
 		return tun.Response{ID: req.ID, Status: http.StatusBadGateway, Body: []byte(err.Error())}
