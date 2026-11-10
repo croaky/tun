@@ -42,8 +42,10 @@ Render provides HTTPS automatically.
 Install `tun` on a laptop:
 
 ```sh
-go install github.com/croaky/tun/cmd/tun@latest
+go install github.com/croaky/tun/cmd/tun@v0.1.0
 ```
+
+croaky/laptop pins this version in `laptop.sh`.
 
 Create a `.env` file in the directory you run `tun`:
 
