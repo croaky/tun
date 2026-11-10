@@ -23,7 +23,6 @@ one word for one meaning, and nothing that carries nothing.
   proxies to a local URL.
 - `protocol.go` defines the frames the two sides exchange.
 - `env.go` reads a `.env` file from the working directory.
-- `scripts/tag` publishes a release tag. "Releases" tells how.
 
 ## Configuration
 
@@ -79,21 +78,21 @@ published after the commit. Never vendor or cache that data.
 
 ## Releases
 
-sockeye is origin and holds no tags. `scripts/tag vX.Y.Z` publishes one
-annotated tag to the GitHub mirror, which is what `go install`
-resolves. Run it from the main checkout after the merge, since it tags
-the tip of `main` and refuses any other commit.
+sockeye is origin and holds no tags. Its merge mirrors `main` to
+GitHub. croaky/laptop installs this command with
+`go install github.com/croaky/tun/cmd/tun@main` on each run of
+`laptop.sh`, so a merge reaches the laptop on the next run with no
+other step.
 
-croaky/laptop pins a tag in `laptop.sh`, and each run of `laptop.sh`
-installs that build of `tun` over the one in `~/go/bin`. A stale pin
-puts back an older build.
-
-After a merge that changes `cmd/tun` or the code it imports, publish a
-tag, then bump the `go install github.com/croaky/tun/cmd/tun@...` line
-of `laptop.sh` to it in a laptop change. Raise the minor version for a
-new setting or behavior, and the patch version for a fix. A merge that
-changes only docs, checks, or `cmd/tund` needs no tag. Render builds
-`tund` from source, not from a tag.
+Do not publish a version tag. No module requires this command in
+`go.mod`, so a version names nothing that Go must resolve. A tag also
+changes `@latest`: Go resolves it to the highest tag, not to `main`, so
+one release with no tag leaves `@latest` on an old build. Docs name
+`@main`, never `@latest`. Tags v0.1.0 and v0.1.1 come from earlier
+releases. They stay, because the Go module proxy keeps each published
+version. Render builds `tund` from source on each merge, not from a
+tag. <https://dancroak.com/go/checks#my-commands> gives the rule for
+each kind of repo.
 
 ## Commits
 
