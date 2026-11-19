@@ -101,10 +101,13 @@ func main() {
 		pending: make(map[string]chan tun.Response),
 	}
 
+	// /health shows the revision, so the operator can see which build
+	// Render serves.
+	rev := tun.Revision()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok " + rev + "\n"))
 	})
 	mux.HandleFunc("/tunnel", s.handleTunnel)
 	mux.HandleFunc("/", s.handleRequest)
@@ -117,7 +120,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       responseTimeout,
 	}
-	log.Printf("tund listening on %s", addr)
+	log.Printf("tund %s listening on %s", rev, addr)
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -174,7 +177,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		_ = oldConn.conn.Close()
 	}
 
-	logf(user, "tunnel connected")
+	logf(user, "tunnel connected, tun %q", r.Header.Get(tun.RevisionHeader))
 
 	// Keepalive: reset read deadlines on pong
 	conn.SetReadDeadline(time.Now().Add(tun.PongWait))

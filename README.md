@@ -21,7 +21,7 @@ Set up `tund` on a server:
 
 Server endpoints:
 
-- `GET /health` - Health check
+- `GET /health` - Health check; the body names the build, as in `ok 1215dd91b61b`
 - `GET /tunnel` - WebSocket endpoint for tunnel client
 - `* /*` - All other requests forwarded through tunnel
 
@@ -30,13 +30,16 @@ A new connection closes the previous one.
 Server logs look like:
 
 ```
-[croaky] tunnel connected
+tund 1215dd91b61b listening on :10000
+[croaky] tunnel connected, tun "v0.1.2-0.20261119133951-1215dd91b61b"
 200 POST /slack/events 147.33ms
 [croaky] tunnel disconnected
 ```
 
 Render deploys `tund` on each merge to `main`.
 A deploy closes the tunnel, and the client connects again.
+To see that a fix is live, compare the commit in `/health`
+and in the `tunnel connected` line with the commit of the fix.
 When a change needs a new environment variable on Render,
 set the variable before you merge the change.
 
@@ -86,7 +89,7 @@ tun
 Client logs look like:
 
 ```
-[croaky] connected to wss://your-service.onrender.com/tunnel, forwarding to http://localhost:3000
+[croaky] tun v0.1.2-0.20261119133951-1215dd91b61b connected to wss://your-service.onrender.com/tunnel, forwarding to http://localhost:3000
 POST /slack/events
 ```
 

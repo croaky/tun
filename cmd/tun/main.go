@@ -116,6 +116,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 
 	h := http.Header{}
 	h.Set("Authorization", "Bearer "+token)
+	h.Set(tun.RevisionHeader, tun.Revision())
 	if user != "" {
 		h.Set("X-Tunnel-User", user)
 	}
@@ -134,7 +135,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 		http:  newHTTPClient(),
 	}
 
-	c.logf("connected to %s, forwarding to %s", server, local)
+	c.logf("tun %s connected to %s, forwarding to %s", tun.Revision(), server, local)
 
 	conn.SetReadLimit(tun.MaxMessage)
 
