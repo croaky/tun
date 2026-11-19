@@ -95,11 +95,11 @@ published after the commit. Never vendor or cache that data.
 
 sockeye is origin and holds no tags. Its merge mirrors `main` to
 GitHub. croaky/laptop installs this command with
-`go install github.com/croaky/tun/cmd/tun@main` on each run of
-`laptop.sh`. The Go module proxy caches what `@main` names, so a run
-soon after a merge can install the previous build. To install a fix
-at once, name its commit: `go install
-github.com/croaky/tun/cmd/tun@<sha>`.
+`GOPROXY=direct go install github.com/croaky/tun/cmd/tun@main` on
+each run of `laptop.sh`, so a merge reaches the laptop on the next
+run. The Go module proxy caches what `@main` names. A plain
+`go install ...@main` soon after a merge can install the previous
+build, so add `GOPROXY=direct` or name the commit.
 
 A fix counts when the running binary has it. `/health` on Render
 shows the `tund` commit. The `tunnel connected` line in the Render log
