@@ -289,3 +289,44 @@ func TestForwardDoesNotFollowRedirects(t *testing.T) {
 		}
 	}
 }
+
+// TestForwardDropsOverrideHeaders checks that no header from the
+// caller can change the method or path that the local service routes.
+// TUN_ALLOW checked only the method and path in the frame. Other
+// headers still arrive.
+func TestForwardDropsOverrideHeaders(t *testing.T) {
+	got := make(chan http.Header, 1)
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+	}))
+	t.Cleanup(local.Close)
+
+	rules, err := parseRules([]string{"POST", "/slack/events"})
+	is.New(t).NoErr(err)
+	c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+
+	for name, value := range map[string]string{
+		"X-HTTP-Method-Override": "DELETE",
+		"X-HTTP-Method":          "DELETE",
+		"X-Method-Override":      "DELETE",
+		"X-Original-URL":         "/admin",
+		"X-Rewrite-URL":          "/admin",
+	} {
+		t.Run(name, func(t *testing.T) {
+			is := is.New(t)
+			resp := c.forward(tun.Request{
+				ID:     "1",
+				Method: "POST",
+				Path:   "/slack/events",
+				Headers: map[string][]string{
+					http.CanonicalHeaderKey(name): {value},
+					"X-Slack-Signature":           {"v0=abc"},
+				},
+			})
+			is.Eq(resp.Status, http.StatusOK)
+			h := <-got
+			is.Eq(h.Values(name), []string(nil))
+			is.Eq(h.Get("X-Slack-Signature"), "v0=abc")
+		})
+	}
+}

@@ -207,6 +207,19 @@ func newHTTPClient() *http.Client {
 	}
 }
 
+// overrideHeaders are headers that some frameworks read to change the
+// method or the path of a request. TUN_ALLOW checks only the method
+// and the path in the request line, so the client removes these
+// headers. The client cannot remove a method override in the body,
+// such as the _method form field.
+var overrideHeaders = []string{
+	"X-HTTP-Method-Override",
+	"X-HTTP-Method",
+	"X-Method-Override",
+	"X-Original-URL",
+	"X-Rewrite-URL",
+}
+
 func (c *client) handleRequest(req tun.Request) {
 	c.send(c.forward(req))
 }
@@ -235,6 +248,9 @@ func (c *client) forward(req tun.Request) tun.Response {
 		for _, v := range vs {
 			r.Header.Add(k, v)
 		}
+	}
+	for _, k := range overrideHeaders {
+		r.Header.Del(k)
 	}
 
 	res, err := c.http.Do(r)
