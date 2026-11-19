@@ -61,6 +61,7 @@ Create a `.env` file in the directory you run `tun`:
 TUN_SERVER=wss://your-service.onrender.com/tunnel
 TUN_LOCAL=http://localhost:3000
 TUN_ALLOW="POST /slack/events GET /health"
+TUN_HEADERS="X-Slack-Signature X-Slack-Request-Timestamp"
 TUN_TOKEN=your-shared-secret
 ```
 
@@ -68,9 +69,17 @@ TUN_TOKEN=your-shared-secret
 All requests not matching a rule return 403 Forbidden.
 `tun` does not follow redirects from the local service.
 It returns each 3xx response to the caller, so `TUN_ALLOW` checks the next request.
-`tun` removes the headers that some frameworks read to change the method or the path:
+
+`tun` forwards only these request headers to the local service:
+`Accept`, `Accept-Encoding`, `Accept-Language`, `Content-Encoding`,
+`Content-Type`, `User-Agent`, and the names in `TUN_HEADERS`.
+It drops each other header, such as `Cookie`, `Authorization`, and `X-Forwarded-For`.
+Add a header to `TUN_HEADERS` only when the local service needs it.
+The Slack example needs the two headers that sign each event.
+`tun` exits at start when `TUN_HEADERS` names a header
+that some frameworks read to change the method or the path:
 `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`,
-`X-Original-URL`, and `X-Rewrite-URL`.
+`X-Original-URL`, or `X-Rewrite-URL`.
 `tun` cannot see a method override in the request body,
 such as the `_method` form field in Rails and Laravel.
 If the local service reads that field, turn it off for the allowed paths.
@@ -117,6 +126,7 @@ go run ./cmd/tund
 #   TUN_SERVER=ws://localhost:8080/tunnel
 #   TUN_LOCAL=http://localhost:3000
 #   TUN_ALLOW=POST /slack/events
+#   TUN_HEADERS=X-Slack-Signature X-Slack-Request-Timestamp
 #   TUN_TOKEN=your-shared-secret
 go run ./cmd/tun
 

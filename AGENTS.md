@@ -27,11 +27,16 @@ one word for one meaning, and nothing that carries nothing.
 ## Configuration
 
 The server reads `PORT` and `TUN_TOKEN`. The client reads
-`TUN_SERVER`, `TUN_LOCAL`, `TUN_ALLOW`, and `TUN_TOKEN`. Both read a
-`.env` file in the directory you run them from.
+`TUN_SERVER`, `TUN_LOCAL`, `TUN_ALLOW`, `TUN_HEADERS`, and
+`TUN_TOKEN`. Both read a `.env` file in the directory you run them
+from.
 
 `TUN_ALLOW` is the allowlist, such as `POST /slack/events`. A request
 outside it does not reach the local service. Keep that default narrow.
+
+`TUN_HEADERS` adds request headers to the short list that the client
+forwards, such as `X-Slack-Signature`. The client drops each other
+header. Add a name only when the local service reads it.
 
 ## Safety
 

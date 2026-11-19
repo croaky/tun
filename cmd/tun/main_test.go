@@ -56,7 +56,7 @@ func TestConnectReadLimit(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		url := "ws" + strings.TrimPrefix(srv.URL, "http")
-		done <- connect(url, "http://127.0.0.1:1", "secret", nil, make(chan os.Signal))
+		done <- connect(url, "http://127.0.0.1:1", "secret", nil, nil, make(chan os.Signal))
 	}()
 
 	select {
@@ -150,7 +150,11 @@ func BenchmarkForward(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+			headers, err := parseHeaders([]string{"X-Slack-Request-Timestamp"})
+			if err != nil {
+				b.Fatal(err)
+			}
+			c := &client{local: local.URL, rules: rules, headers: headers, http: newHTTPClient()}
 			req := tun.Request{
 				ID:     "0123456789abcdef0123456789abcdef",
 				Method: "POST",
@@ -290,11 +294,11 @@ func TestForwardDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
-// TestForwardDropsOverrideHeaders checks that no header from the
-// caller can change the method or path that the local service routes.
-// TUN_ALLOW checked only the method and path in the frame. Other
-// headers still arrive.
-func TestForwardDropsOverrideHeaders(t *testing.T) {
+// TestForwardHeaders checks that only baseHeaders and the TUN_HEADERS
+// names reach the local service. No header from the caller can change
+// the method or the path that TUN_ALLOW checked.
+func TestForwardHeaders(t *testing.T) {
+	is := is.New(t)
 	got := make(chan http.Header, 1)
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got <- r.Header.Clone()
@@ -302,31 +306,59 @@ func TestForwardDropsOverrideHeaders(t *testing.T) {
 	t.Cleanup(local.Close)
 
 	rules, err := parseRules([]string{"POST", "/slack/events"})
-	is.New(t).NoErr(err)
-	c := &client{local: local.URL, rules: rules, http: newHTTPClient()}
+	is.NoErr(err)
+	headers, err := parseHeaders([]string{"x-slack-signature"})
+	is.NoErr(err)
+	c := &client{local: local.URL, rules: rules, headers: headers, http: newHTTPClient()}
 
-	for name, value := range map[string]string{
-		"X-HTTP-Method-Override": "DELETE",
-		"X-HTTP-Method":          "DELETE",
-		"X-Method-Override":      "DELETE",
-		"X-Original-URL":         "/admin",
-		"X-Rewrite-URL":          "/admin",
+	resp := c.forward(tun.Request{
+		ID:     "1",
+		Method: "POST",
+		Path:   "/slack/events",
+		Headers: map[string][]string{
+			"Content-Type":           {"application/json"},
+			"X-Slack-Signature":      {"v0=abc"},
+			"X-Http-Method-Override": {"DELETE"},
+			"X-Http-Method":          {"DELETE"},
+			"X-Method-Override":      {"DELETE"},
+			"X-Original-Url":         {"/admin"},
+			"X-Rewrite-Url":          {"/admin"},
+			"X-Forwarded-Prefix":     {"/admin"},
+			"X-Forwarded-Host":       {"evil.example"},
+			"Cookie":                 {"session=1"},
+		},
+	})
+
+	is.Eq(resp.Status, http.StatusOK)
+	h := <-got
+	is.Eq(h.Get("Content-Type"), "application/json")
+	is.Eq(h.Get("X-Slack-Signature"), "v0=abc")
+	for _, name := range []string{
+		"X-Http-Method-Override", "X-Http-Method", "X-Method-Override",
+		"X-Original-Url", "X-Rewrite-Url", "X-Forwarded-Prefix",
+		"X-Forwarded-Host", "Cookie",
 	} {
-		t.Run(name, func(t *testing.T) {
-			is := is.New(t)
-			resp := c.forward(tun.Request{
-				ID:     "1",
-				Method: "POST",
-				Path:   "/slack/events",
-				Headers: map[string][]string{
-					http.CanonicalHeaderKey(name): {value},
-					"X-Slack-Signature":           {"v0=abc"},
-				},
-			})
-			is.Eq(resp.Status, http.StatusOK)
-			h := <-got
-			is.Eq(h.Values(name), []string(nil))
-			is.Eq(h.Get("X-Slack-Signature"), "v0=abc")
-		})
+		is.Eq(h.Values(name), []string(nil))
+	}
+}
+
+// TestParseHeaders checks that TUN_HEADERS adds to baseHeaders in any
+// case, and that it cannot name a method or URL override header.
+func TestParseHeaders(t *testing.T) {
+	is := is.New(t)
+
+	headers, err := parseHeaders(nil)
+	is.NoErr(err)
+	is.Eq(len(headers), len(baseHeaders))
+
+	headers, err = parseHeaders([]string{"x-slack-signature", "X-Slack-Request-Timestamp"})
+	is.NoErr(err)
+	is.True(headers["X-Slack-Signature"])
+	is.True(headers["X-Slack-Request-Timestamp"])
+	is.True(headers["Content-Type"])
+
+	for _, name := range []string{"X-HTTP-Method-Override", "x-original-url", "X-Rewrite-URL"} {
+		_, err := parseHeaders([]string{name})
+		is.HasErr(err)
 	}
 }

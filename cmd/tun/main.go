@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +30,13 @@ type rule struct {
 }
 
 type client struct {
-	conn  *websocket.Conn
-	mu    sync.Mutex
-	local string
-	rules []rule
-	user  string
-	http  *http.Client
+	conn    *websocket.Conn
+	mu      sync.Mutex
+	local   string
+	rules   []rule
+	headers map[string]bool // canonical names that forward copies
+	user    string
+	http    *http.Client
 }
 
 func (c *client) logf(format string, args ...any) {
@@ -64,8 +67,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}
+	headers, err := parseHeaders(strings.Fields(os.Getenv("TUN_HEADERS")))
+	if err != nil {
+		log.Fatalf("error: %v", err)
+	}
+	log.Printf("forwarding headers: %s", strings.Join(slices.Sorted(maps.Keys(headers)), " "))
 
-	run(server, local, token, rules)
+	run(server, local, token, rules, headers)
 }
 
 var delays = []time.Duration{
@@ -85,13 +93,13 @@ const (
 
 // run connects to the tunnel server and forwards requests to the local service.
 // It reconnects with backoff on connection errors.
-func run(server, local, token string, rules []rule) {
+func run(server, local, token string, rules []rule, headers map[string]bool) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 
 	attempt := 0
 	for {
-		err := connect(server, local, token, rules, interrupt)
+		err := connect(server, local, token, rules, headers, interrupt)
 		if err == nil {
 			return // graceful shutdown
 		}
@@ -111,7 +119,7 @@ func run(server, local, token string, rules []rule) {
 	}
 }
 
-func connect(server, local, token string, rules []rule, interrupt chan os.Signal) error {
+func connect(server, local, token string, rules []rule, headers map[string]bool, interrupt chan os.Signal) error {
 	user := getUser()
 
 	h := http.Header{}
@@ -128,11 +136,12 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 	defer conn.Close()
 
 	c := &client{
-		conn:  conn,
-		local: local,
-		rules: rules,
-		user:  user,
-		http:  newHTTPClient(),
+		conn:    conn,
+		local:   local,
+		rules:   rules,
+		headers: headers,
+		user:    user,
+		http:    newHTTPClient(),
 	}
 
 	c.logf("tun %s connected to %s, forwarding to %s", tun.Revision(), server, local)
@@ -208,17 +217,45 @@ func newHTTPClient() *http.Client {
 	}
 }
 
+// baseHeaders are the request headers that the client always forwards.
+// They describe the body and the caller. TUN_HEADERS adds to them.
+var baseHeaders = []string{
+	"Accept",
+	"Accept-Encoding",
+	"Accept-Language",
+	"Content-Encoding",
+	"Content-Type",
+	"User-Agent",
+}
+
 // overrideHeaders are headers that some frameworks read to change the
 // method or the path of a request. TUN_ALLOW checks only the method
-// and the path in the request line, so the client removes these
-// headers. The client cannot remove a method override in the body,
-// such as the _method form field.
+// and the path in the request line, so TUN_HEADERS cannot name them.
+// The names are in canonical form. The client cannot see a method
+// override in the body, such as the _method form field.
 var overrideHeaders = []string{
-	"X-HTTP-Method-Override",
-	"X-HTTP-Method",
+	"X-Http-Method-Override",
+	"X-Http-Method",
 	"X-Method-Override",
-	"X-Original-URL",
-	"X-Rewrite-URL",
+	"X-Original-Url",
+	"X-Rewrite-Url",
+}
+
+// parseHeaders returns the canonical names of the request headers that
+// the client forwards: baseHeaders and names. The client drops each
+// other header, so only a header that the operator chose reaches the
+// local service. A new override header in some framework then needs no
+// change here.
+func parseHeaders(names []string) (map[string]bool, error) {
+	headers := make(map[string]bool)
+	for _, name := range append(slices.Clone(baseHeaders), names...) {
+		k := http.CanonicalHeaderKey(name)
+		if slices.Contains(overrideHeaders, k) {
+			return nil, fmt.Errorf("TUN_HEADERS cannot hold %s, because it changes the method or the path that TUN_ALLOW checks", k)
+		}
+		headers[k] = true
+	}
+	return headers, nil
 }
 
 func (c *client) handleRequest(req tun.Request) {
@@ -246,12 +283,12 @@ func (c *client) forward(req tun.Request) tun.Response {
 		return resp
 	}
 	for k, vs := range req.Headers {
+		if !c.headers[http.CanonicalHeaderKey(k)] {
+			continue
+		}
 		for _, v := range vs {
 			r.Header.Add(k, v)
 		}
-	}
-	for _, k := range overrideHeaders {
-		r.Header.Del(k)
 	}
 
 	res, err := c.http.Do(r)
