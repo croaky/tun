@@ -2,6 +2,7 @@ package tun
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"strconv"
@@ -42,4 +43,49 @@ func TestReadBodyError(t *testing.T) {
 
 	is.True(errors.Is(err, want))
 	is.Eq(string(got), "ab")
+}
+
+// TestWireInvalidUTF8 checks that WireOptions changes each byte that
+// is not UTF-8 to U+FFFD, as encoding/json v1 did, on Marshal and on
+// Unmarshal.
+func TestWireInvalidUTF8(t *testing.T) {
+	is := is.New(t)
+
+	msg, err := json.Marshal(Request{Headers: map[string][]string{"X-Obs": {"a\xffb"}}}, WireOptions)
+	is.NoErr(err)
+	var req Request
+	is.NoErr(json.Unmarshal(msg, &req, WireOptions))
+	is.Eq(req.Headers["X-Obs"], []string{"a\uFFFDb"})
+
+	var resp Response
+	is.NoErr(json.Unmarshal([]byte("{\"headers\":{\"X-Obs\":[\"c\xffd\"]}}"), &resp, WireOptions))
+	is.Eq(resp.Headers["X-Obs"], []string{"c\uFFFDd"})
+}
+
+// TestWireNil checks the frames for a nil map and a nil body. v2 sends
+// {} and "", and v1 sent null. A v1 peer decodes {} and "", and each
+// side decodes null, so a client and a server on different versions
+// still work together.
+func TestWireNil(t *testing.T) {
+	is := is.New(t)
+
+	msg, err := json.Marshal(Response{ID: "1", Status: 200}, WireOptions)
+	is.NoErr(err)
+	is.Eq(string(msg), `{"id":"1","status":200,"headers":{},"body":""}`)
+
+	for _, in := range []string{
+		`{"id":"1","status":200,"headers":null,"body":null}`,
+		`{"id":"1","status":200,"headers":{},"body":""}`,
+	} {
+		var resp Response
+		is.NoErr(json.Unmarshal([]byte(in), &resp, WireOptions))
+		is.Eq(resp.ID, "1")
+		is.Eq(len(resp.Headers), 0)
+		is.Eq(len(resp.Body), 0)
+
+		var req Request
+		is.NoErr(json.Unmarshal([]byte(in), &req, WireOptions))
+		is.Eq(len(req.Headers), 0)
+		is.Eq(len(req.Body), 0)
+	}
 }

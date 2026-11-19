@@ -3,6 +3,7 @@
 package tun
 
 import (
+	"encoding/json/jsontext"
 	"io"
 	"time"
 )
@@ -25,6 +26,13 @@ const (
 	MaxBody    = 1 << 20
 	MaxMessage = 2 * MaxBody
 )
+
+// WireOptions holds the JSON options that both sides use for each
+// frame. A header value can hold bytes that are not UTF-8 (obs-text).
+// With AllowInvalidUTF8, Marshal and Unmarshal change each such byte
+// to U+FFFD, as encoding/json v1 did. Without it, Marshal returns an
+// error and the request fails.
+var WireOptions = jsontext.AllowInvalidUTF8(true)
 
 // Request is sent from server to client through the WebSocket tunnel.
 type Request struct {

@@ -5,7 +5,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log"
@@ -190,7 +190,7 @@ func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var resp tun.Response
-		if err := json.Unmarshal(msg, &resp); err != nil {
+		if err := json.Unmarshal(msg, &resp, tun.WireOptions); err != nil {
 			log.Printf("invalid response: %v", err)
 			continue
 		}
@@ -260,7 +260,7 @@ func (s *server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		Body:    body,
 	}
 
-	msg, err := json.Marshal(req)
+	msg, err := json.Marshal(req, tun.WireOptions)
 	if err != nil {
 		log.Printf("%d %s %s %.2fms", http.StatusInternalServerError, r.Method, r.URL.RequestURI(), ms(time.Since(start)))
 		http.Error(w, "marshal error", http.StatusInternalServerError)

@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"log"
 	"net"
@@ -265,7 +265,7 @@ func echoPeer(b *testing.B, url string) {
 				return
 			}
 			var req tun.Request
-			if err := json.Unmarshal(msg, &req); err != nil {
+			if err := json.Unmarshal(msg, &req, tun.WireOptions); err != nil {
 				return
 			}
 			out, _ := json.Marshal(tun.Response{
@@ -273,7 +273,7 @@ func echoPeer(b *testing.B, url string) {
 				Status:  http.StatusOK,
 				Headers: map[string][]string{"Content-Type": {"text/plain"}},
 				Body:    []byte("ok"),
-			})
+			}, tun.WireOptions)
 			if err := conn.WriteMessage(websocket.TextMessage, out); err != nil {
 				return
 			}
@@ -340,6 +340,47 @@ func BenchmarkHandleRequestTooLarge(b *testing.B) {
 		if rw := post(s, body); rw.Code != http.StatusRequestEntityTooLarge {
 			b.Fatalf("status %d", rw.Code)
 		}
+	}
+}
+
+// TestHandleRequestInvalidUTF8 sends a header value that is not UTF-8
+// (obs-text) in each direction. Each side changes the bad byte to
+// U+FFFD, as encoding/json v1 did, and the request does not fail. The
+// peer sends a null body, as a v1 client does for an empty body.
+func TestHandleRequestInvalidUTF8(t *testing.T) {
+	is := is.New(t)
+	s := newServer()
+	peer := dialPeer(t, startTunnelServer(t, s))
+	waitConn(t, s, nil, time.Second)
+
+	got := make(chan []string, 1)
+	go func() {
+		_, msg, err := peer.ReadMessage()
+		if err != nil {
+			return
+		}
+		var req tun.Request
+		if err := json.Unmarshal(msg, &req, tun.WireOptions); err != nil {
+			return
+		}
+		got <- req.Headers["X-Obs"]
+		out := `{"id":"` + req.ID + `","status":200,"headers":{"X-Obs":["c` + "\xff" + `d"]},"body":null}`
+		_ = peer.WriteMessage(websocket.TextMessage, []byte(out))
+	}()
+
+	r := httptest.NewRequest(http.MethodPost, "/slack/events", nil)
+	r.Header.Set("X-Obs", "a\xffb")
+	rw := httptest.NewRecorder()
+	s.handleRequest(rw, r)
+
+	is.Eq(rw.Code, http.StatusOK)
+	is.Eq(rw.Header().Get("X-Obs"), "c\uFFFDd")
+	is.Eq(rw.Body.Len(), 0)
+	select {
+	case h := <-got:
+		is.Eq(h, []string{"a\uFFFDb"})
+	default:
+		t.Fatal("the peer got no request")
 	}
 }
 

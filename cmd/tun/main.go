@@ -4,7 +4,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log"
@@ -174,7 +174,7 @@ func connect(server, local, token string, rules []rule, interrupt chan os.Signal
 			}
 
 			var req tun.Request
-			if err := json.Unmarshal(msg, &req); err != nil {
+			if err := json.Unmarshal(msg, &req, tun.WireOptions); err != nil {
 				log.Printf("invalid request: %v", err)
 				continue
 			}
@@ -263,7 +263,7 @@ func (c *client) forward(req tun.Request) tun.Response {
 }
 
 func (c *client) send(resp tun.Response) {
-	msg, err := json.Marshal(resp)
+	msg, err := json.Marshal(resp, tun.WireOptions)
 	if err != nil {
 		log.Printf("marshal error: %v", err)
 		return
@@ -271,7 +271,7 @@ func (c *client) send(resp tun.Response) {
 	if len(msg) > tun.MaxMessage {
 		// tund closes the tunnel on a message above its read limit.
 		log.Printf("response too large: %d bytes", len(msg))
-		msg, _ = json.Marshal(tun.Response{ID: resp.ID, Status: http.StatusBadGateway, Body: []byte("response too large")})
+		msg, _ = json.Marshal(tun.Response{ID: resp.ID, Status: http.StatusBadGateway, Body: []byte("response too large")}, tun.WireOptions)
 	}
 	c.mu.Lock()
 	err = c.conn.WriteMessage(websocket.TextMessage, msg)
