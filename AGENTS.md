@@ -47,6 +47,16 @@ A tunnel exposes a local service to the internet. State the allowlist
 before you widen anything, and prefer the narrowest rule that serves
 the case.
 
+The length of `TUN_TOKEN` is the only limit on online guesses at
+`/tunnel`. `tund` refuses a token with fewer than 32 characters,
+compares digests in constant time, and logs each failure. Do not add a
+throttle on failed attempts. `tund` answers a correct token at once,
+so a throttle must stop attempts before the check. A limit for all
+callers then lets any caller lock out the real client. A limit for
+each caller needs the caller's address, and Render's proxy hides it
+from `r.RemoteAddr`. A random 32-character token makes guessing
+impractical without that cost.
+
 ## Checks
 
 The root `Checkfile` lists the checks CI runs on every push. Run the
@@ -86,8 +96,15 @@ published after the commit. Never vendor or cache that data.
 sockeye is origin and holds no tags. Its merge mirrors `main` to
 GitHub. croaky/laptop installs this command with
 `go install github.com/croaky/tun/cmd/tun@main` on each run of
-`laptop.sh`, so a merge reaches the laptop on the next run with no
-other step.
+`laptop.sh`. The Go module proxy caches what `@main` names, so a run
+soon after a merge can install the previous build. To install a fix
+at once, name its commit: `go install
+github.com/croaky/tun/cmd/tun@<sha>`.
+
+A fix counts when the running binary has it. `/health` on Render
+shows the `tund` commit. The `tunnel connected` line in the Render log
+shows the `tun` build of each laptop. Read both before you mark a
+security finding fixed.
 
 Do not publish a version tag. No module requires this command in
 `go.mod`, so a version names nothing that Go must resolve. A tag also
