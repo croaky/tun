@@ -90,9 +90,10 @@ changes `@latest`: Go resolves it to the highest tag, not to `main`, so
 one release with no tag leaves `@latest` on an old build. Docs name
 `@main`, never `@latest`. Tags v0.1.0 and v0.1.1 come from earlier
 releases. They stay, because the Go module proxy keeps each published
-version. Render builds `tund` from source on each merge, not from a
-tag. <https://dancroak.com/go/checks#my-commands> gives the rule for
-each kind of repo.
+version. Render builds and deploys `tund` from source on each merge,
+not from a tag. Set a new Render environment variable before the
+merge that needs it. <https://dancroak.com/go/checks#my-commands>
+gives the rule for each kind of repo.
 
 ## Commits
 

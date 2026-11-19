@@ -15,7 +15,7 @@ Set up `tund` on a server:
 3. Set build command: `go build -o tund ./cmd/tund`
 4. Set start command: `./tund`
 5. Set environment variable `TUN_TOKEN` to the output of `openssl rand -hex 32`
-6. Set "Auto Deploy" to "Off"
+6. Set "Auto-Deploy" to "On Commit"
 7. Set "Health Check Path" to `/health`
 8. Deploy
 
@@ -34,6 +34,11 @@ Server logs look like:
 200 POST /slack/events 147.33ms
 [croaky] tunnel disconnected
 ```
+
+Render deploys `tund` on each merge to `main`.
+A deploy closes the tunnel, and the client connects again.
+When a change needs a new environment variable on Render,
+set the variable before you merge the change.
 
 Configure the Slack app's "Event Subscriptions URL" to:
 `https://your-service.onrender.com/slack/events`.
