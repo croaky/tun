@@ -75,7 +75,7 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 
 	tund := exec.CommandContext(ctx, filepath.Join(bin, "tund"))
 	tund.Dir = root
-	tund.Env = append(os.Environ(), "PORT="+port, "TUN_TOKEN=itest", "PATH="+os.Getenv("PATH"), "HOME="+os.Getenv("HOME"))
+	tund.Env = append(os.Environ(), "PORT="+port, "TUN_TOKEN=test-token-0123456789abcdef01234", "PATH="+os.Getenv("PATH"), "HOME="+os.Getenv("HOME"))
 	stderr, _ := tund.StderrPipe()
 	stdout, _ := tund.StdoutPipe()
 	is.NoErr(tund.Start())
@@ -101,7 +101,7 @@ func TestEndToEnd_TunnelForwardsRequest(t *testing.T) {
 		"TUN_SERVER="+wsURL,
 		"TUN_LOCAL="+srv.URL,
 		"TUN_ALLOW=POST /slack/events",
-		"TUN_TOKEN=itest",
+		"TUN_TOKEN=test-token-0123456789abcdef01234",
 	)
 	tunStdout, _ := tunCmd.StdoutPipe()
 	tunStderr, _ := tunCmd.StderrPipe()

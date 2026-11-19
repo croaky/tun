@@ -14,7 +14,7 @@ Set up `tund` on a server:
 2. Set "Public Git Repository" to `https://github.com/croaky/tun`
 3. Set build command: `go build -o tund ./cmd/tund`
 4. Set start command: `./tund`
-5. Set environment variable `TUN_TOKEN` to something secret
+5. Set environment variable `TUN_TOKEN` to the output of `openssl rand -hex 32`
 6. Set "Auto Deploy" to "Off"
 7. Set "Health Check Path" to `/health`
 8. Deploy
@@ -63,6 +63,8 @@ It returns each 3xx response to the caller, so `TUN_ALLOW` checks the next reque
 
 `TUN_TOKEN` is required on both client and server.
 The client authenticates using `Authorization: Bearer <token>`.
+`tund` exits at start when `TUN_TOKEN` has fewer than 32 characters,
+and it logs each failed authentication without the token that the client sent.
 
 Run:
 

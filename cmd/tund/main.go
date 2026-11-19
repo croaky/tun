@@ -4,6 +4,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -31,6 +33,12 @@ const responseTimeout = 30 * time.Second
 // Content-Length, so tund does not trust a larger one. A Slack event is
 // smaller.
 const preallocBody = 64 << 10
+
+// minToken is the fewest characters tund accepts in TUN_TOKEN. The
+// token is the only credential, and nothing limits online guesses, so
+// only its length keeps a guess from working. `openssl rand -hex 32`
+// gives 64 characters.
+const minToken = 32
 
 // writeWait is how long a write to the tunnel can take. Tests change it.
 var writeWait = 5 * time.Second
@@ -64,7 +72,9 @@ func logf(user, format string, args ...any) {
 }
 
 type server struct {
-	token   string
+	// token is the SHA-256 digest of TUN_TOKEN. tund keeps only the
+	// digest, so each check compares two values of the same length.
+	token   [sha256.Size]byte
 	mu      sync.RWMutex
 	conn    *tunnel
 	user    string
@@ -82,12 +92,12 @@ func main() {
 	addr := ":" + port
 
 	token := strings.TrimSpace(os.Getenv("TUN_TOKEN"))
-	if token == "" {
-		log.Fatal("TUN_TOKEN is required")
+	if err := checkToken(token); err != nil {
+		log.Fatal(err)
 	}
 
 	s := &server{
-		token:   token,
+		token:   sha256.Sum256([]byte(token)),
 		pending: make(map[string]chan tun.Response),
 	}
 
@@ -111,10 +121,29 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
+// checkToken returns an error when token is too short to be the only
+// credential.
+func checkToken(token string) error {
+	if len(token) < minToken {
+		return fmt.Errorf("TUN_TOKEN needs %d or more characters", minToken)
+	}
+	return nil
+}
+
+// authorized reports whether r holds the bearer token. It compares
+// digests in constant time, so the time to reject a guess does not
+// show how much of the guess matches.
+func (s *server) authorized(r *http.Request) bool {
+	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	sum := sha256.Sum256([]byte(strings.TrimSpace(got)))
+	return subtle.ConstantTimeCompare(sum[:], s.token[:]) == 1 && ok
+}
+
 func (s *server) handleTunnel(w http.ResponseWriter, r *http.Request) {
-	got := r.Header.Get("Authorization")
-	const prefix = "Bearer "
-	if !strings.HasPrefix(got, prefix) || strings.TrimSpace(strings.TrimPrefix(got, prefix)) != s.token {
+	if !s.authorized(r) {
+		// The log line does not hold the header, so a guess and a
+		// token that the client sent in error stay out of the log.
+		log.Printf("%d %s %s unauthorized from %s", http.StatusUnauthorized, r.Method, r.URL.Path, r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json/v2"
 	"io"
 	"log"
@@ -22,19 +23,78 @@ import (
 	"github.com/croaky/tun"
 )
 
-func TestHandleTunnelAuthUnauthorized(t *testing.T) {
-	is := is.New(t)
+// testToken has minToken characters, the shortest token tund accepts.
+const testToken = "test-token-0123456789abcdef01234"
 
-	s := &server{
-		token:   "secret",
-		pending: make(map[string]chan tun.Response),
+func TestCheckToken(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		token string
+		ok    bool
+	}{
+		{"empty", "", false},
+		{"one short", testToken[1:], false},
+		{"minimum", testToken, true},
+		{"hex 32 bytes", strings.Repeat("ab", 32), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			is := is.New(t)
+			err := checkToken(tt.token)
+			is.Eq(err == nil, tt.ok)
+		})
 	}
-	r := httptest.NewRequest(http.MethodGet, "/tunnel", nil)
-	rw := httptest.NewRecorder()
+}
 
-	s.handleTunnel(rw, r)
+// TestHandleTunnelAuthUnauthorized checks that tund rejects each wrong
+// Authorization header with 401 and logs the failure. The log line
+// must not hold the value that the client sent.
+func TestHandleTunnelAuthUnauthorized(t *testing.T) {
+	for name, auth := range map[string]string{
+		"no header":      "",
+		"wrong token":    "Bearer " + strings.Repeat("x", len(testToken)),
+		"token prefix":   "Bearer " + testToken[:len(testToken)-1],
+		"token plus one": "Bearer " + testToken + "x",
+		"not bearer":     "Basic " + testToken,
+	} {
+		t.Run(name, func(t *testing.T) {
+			is := is.New(t)
+			var logs bytes.Buffer
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	is.Eq(rw.Code, http.StatusUnauthorized)
+			r := httptest.NewRequest(http.MethodGet, "/tunnel", nil)
+			if auth != "" {
+				r.Header.Set("Authorization", auth)
+			}
+			rw := httptest.NewRecorder()
+			newServer().handleTunnel(rw, r)
+
+			is.Eq(rw.Code, http.StatusUnauthorized)
+			is.True(strings.Contains(logs.String(), "401 GET /tunnel unauthorized"))
+			is.True(!strings.Contains(logs.String(), testToken[:8]))
+			is.True(!strings.Contains(logs.String(), "xxxxxxxx"))
+		})
+	}
+}
+
+// TestHandleTunnelAuthorized checks that the correct token connects,
+// also with space around it, as the client trims TUN_TOKEN.
+func TestHandleTunnelAuthorized(t *testing.T) {
+	for name, auth := range map[string]string{
+		"exact":  "Bearer " + testToken,
+		"padded": "Bearer  " + testToken + " ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			is := is.New(t)
+			s := newServer()
+			h := http.Header{}
+			h.Set("Authorization", auth)
+			conn, _, err := websocket.DefaultDialer.Dial(startTunnelServer(t, s), h)
+			is.NoErr(err)
+			t.Cleanup(func() { _ = conn.Close() })
+			waitConn(t, s, nil, time.Second)
+		})
+	}
 }
 
 func TestNewID(t *testing.T) {
@@ -58,11 +118,7 @@ func TestNewID(t *testing.T) {
 func TestHandleRequest_NoTunnel(t *testing.T) {
 	is := is.New(t)
 
-	s := &server{
-		token:   "secret",
-		pending: make(map[string]chan tun.Response),
-		// conn is nil - no tunnel connected
-	}
+	s := newServer() // conn is nil - no tunnel connected
 
 	r := httptest.NewRequest(http.MethodPost, "/slack/events", strings.NewReader(`{}`))
 	rw := httptest.NewRecorder()
@@ -102,7 +158,7 @@ func dialPeer(t *testing.T, url string) *websocket.Conn {
 		},
 	}
 	h := http.Header{}
-	h.Set("Authorization", "Bearer secret")
+	h.Set("Authorization", "Bearer "+testToken)
 	conn, _, err := d.Dial(url, h)
 	is.New(t).NoErr(err)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -110,7 +166,7 @@ func dialPeer(t *testing.T, url string) *websocket.Conn {
 }
 
 func newServer() *server {
-	return &server{token: "secret", pending: make(map[string]chan tun.Response)}
+	return &server{token: sha256.Sum256([]byte(testToken)), pending: make(map[string]chan tun.Response)}
 }
 
 // waitConn waits until the active tunnel is not old.
@@ -252,7 +308,7 @@ func TestHandleRequestWriteDeadline(t *testing.T) {
 func echoPeer(b *testing.B, url string) {
 	b.Helper()
 	h := http.Header{}
-	h.Set("Authorization", "Bearer secret")
+	h.Set("Authorization", "Bearer "+testToken)
 	conn, _, err := websocket.DefaultDialer.Dial(url, h)
 	if err != nil {
 		b.Fatal(err)
